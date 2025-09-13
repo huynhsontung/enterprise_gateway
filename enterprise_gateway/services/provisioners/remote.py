@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Union, override
 from socket import SHUT_RDWR
 
 from .base import EnterpriseProvisionerBase
+from ..processproxies.processproxy import ResponseManager
 
 
 class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
@@ -44,9 +45,15 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.comm_port = 0
         self.tunneled_connect_info = None
         self.tunnel_processes = {}
-        self.response_address = None
-        self.public_key = None
         self.response_socket = None
+        
+        # ResponseManager integration
+        self.response_manager = ResponseManager.instance()
+        self.response_manager.register_event(self.kernel_id)
+        
+        # Set response address and public key for kernel launchers
+        self.response_address = self.response_manager.response_address
+        self.public_key = self.response_manager.public_key
         
         # Process tracking attributes
         self.pid = 0
@@ -55,13 +62,42 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         
         # Initialize response management for remote communication
         self._setup_response_management()
+
+    @override
+    async def pre_launch(self, **kwargs) -> Dict[str, Any]:
+        """
+        Setup remote kernel launch environment.
+        
+        Adds ResponseManager environment variables for remote kernel communication.
+        
+        Args:
+            **kwargs: Launch arguments
+            
+        Returns:
+            Updated launch arguments
+        """
+        # Call parent pre_launch first
+        kwargs = await super().pre_launch(**kwargs)
+        
+        # Add ResponseManager environment variables for remote kernel launcher
+        if 'env' not in kwargs:
+            kwargs['env'] = {}
+            
+        # ResponseManager communication parameters
+        kwargs['env']['EG_RESPONSE_ADDRESS'] = self.response_address
+        kwargs['env']['EG_PUBLIC_KEY'] = self.public_key
+        kwargs['env']['EG_KERNEL_ID'] = self.kernel_id
+        
+        self.log.debug(f"Added ResponseManager env vars - address: {self.response_address}")
+        
+        return kwargs
         
     def _setup_response_management(self) -> None:
         """Setup response socket management for remote communication."""
-        # This will implement response socket management
-        # For now, we'll set up the basic structure
-        # TODO: Integrate with ResponseManager when available
-        pass
+        # ResponseManager is already initialized in __init__
+        # This method is now used for any additional setup if needed
+        self.log.debug(f"Response management setup complete for kernel {self.kernel_id}")
+        self.log.debug(f"Response address: {self.response_address}")
         
     def _close_response_socket(self) -> None:
         """Close the response socket if it exists."""
@@ -130,6 +166,17 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         
         # Launch the remote process (implemented by subclasses)
         connection_info = await self._launch_remote_process(cmd, **kwargs)
+        
+        # Wait for connection info from ResponseManager if this is a remote launch
+        # The kernel launcher will send connection details back via ResponseManager
+        if not connection_info:
+            self.log.debug("No immediate connection info, waiting for ResponseManager...")
+            success = await self.receive_connection_info()
+            if not success:
+                self.detect_launch_failure()
+                raise RuntimeError("Failed to receive connection info from remote kernel launcher")
+            # After receive_connection_info, connection_info is stored in self.connection_info
+            connection_info = getattr(self, 'connection_info', {})
         
         # Extract process information from connection info
         self._extract_pid_info(connection_info)
@@ -218,8 +265,29 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             connection_info: Connection information to update
         """
         if connection_info:
+            # Extract communication port if present
+            if 'comm_port' in connection_info:
+                self.comm_port = int(connection_info['comm_port'])
+                self.log.debug(f"Updated comm_port: {self.comm_port}")
+            
+            # Extract assigned host/IP if present  
+            if 'assigned_host' in connection_info:
+                self.assigned_host = str(connection_info['assigned_host'])
+                self.log.debug(f"Updated assigned_host: {self.assigned_host}")
+                
+            if 'assigned_ip' in connection_info:
+                self.assigned_ip = str(connection_info['assigned_ip'])
+                self.log.debug(f"Updated assigned_ip: {self.assigned_ip}")
+                
+            # Set comm_ip to assigned_ip if not already set
+            if self.assigned_ip and not self.comm_ip:
+                self.comm_ip = self.assigned_ip
+            
             # Extract process information
             self._extract_pid_info(connection_info)
+            
+            # Store the connection info for the provisioner
+            self.connection_info = connection_info
             
             # Update kernel manager with connection info
             # TODO: Integrate with kernel manager's load_connection_info
@@ -227,6 +295,8 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                 f"Received connection info for KernelID '{self.kernel_id}' "
                 f"from host '{self.assigned_host}': {connection_info}..."
             )
+            
+            self.log.info(f"Connection information updated for kernel {self.kernel_id}")
         else:
             error_message = (
                 f"Unexpected runtime encountered for Kernel ID '{self.kernel_id}' - "
@@ -244,10 +314,15 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         Returns:
             True if connection info received successfully
         """
-        # This will implement the response socket monitoring logic
-        # For now, return True to indicate success
-        self.log.debug("receive_connection_info: placeholder implementation")
-        return True
+        try:
+            self.log.debug(f"Waiting for connection info for kernel {self.kernel_id}")
+            connect_info = await self.response_manager.get_connection_info(self.kernel_id)
+            self.log.debug(f"Received connection info: {connect_info}")
+            self._update_connection(connect_info)
+            return True
+        except Exception as e:
+            self.log.error(f"Failed to receive connection info for kernel {self.kernel_id}: {e}")
+            return False
         
     def detect_launch_failure(self) -> None:
         """
