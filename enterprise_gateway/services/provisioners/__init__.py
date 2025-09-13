@@ -8,9 +8,11 @@ provisioning system.
 from .base import EnterpriseProvisionerBase
 from .local import LocalEnterpriseProvisioner  
 from .remote import RemoteEnterpriseProvisioner
+from .container import ContainerEnterpriseProvisioner
 
 __all__ = [
     "EnterpriseProvisionerBase",
     "LocalEnterpriseProvisioner", 
     "RemoteEnterpriseProvisioner",
+    "ContainerEnterpriseProvisioner",
 ]

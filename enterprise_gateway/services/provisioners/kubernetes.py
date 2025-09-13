@@ -18,7 +18,7 @@ import urllib3
 from kubernetes import client, config
 from jupyter_client import KernelConnectionInfo
 
-from .remote import RemoteEnterpriseProvisioner
+from .container import ContainerEnterpriseProvisioner
 from ..sessions.kernelsessionmanager import KernelSessionManager
 
 # Disable excessive kubernetes warnings
@@ -49,7 +49,7 @@ except config.ConfigException:
         pass
 
 
-class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
+class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
     """
     Kubernetes kernel provisioner for Enterprise Gateway.
     
@@ -69,11 +69,12 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
     
     def __init__(self, **kwargs):
         """Initialize the Kubernetes Enterprise Gateway provisioner."""
-        # Extract Kubernetes-specific arguments before calling super()
+        # Extract Kubernetes-specific arguments that shouldn't be passed to parent classes
         self.kernel_namespace = kwargs.pop('kernel_namespace', None)
-        self.kernel_image = kwargs.pop('kernel_image', None)
-        self.kernel_executor_image = kwargs.pop('kernel_executor_image', None)
         self.kernel_service_account_name = kwargs.pop('kernel_service_account_name', None)
+        
+        # kernel_image and kernel_executor_image will be handled by ContainerEnterpriseProvisioner
+        # Don't pop them here so they're available to the parent class
         
         super().__init__(**kwargs)
         
@@ -416,7 +417,7 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
     
     def get_error_states(self) -> set:
         """Return list of states indicating container failed."""
-        return {"failed"}
+        return {"failed", "error", "crashloopbackoff", "imagepullbackoff", "errimagepull"}
     
     def get_container_status(self, iteration: Optional[int]) -> str:
         """
@@ -773,3 +774,25 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
                 dns_name = dns_name[:-1]
         
         return dns_name
+
+    async def _terminate_container_resources(self) -> None:
+        """Terminate any artifacts created on behalf of the container's lifetime."""
+        try:
+            # Delete the pod
+            if getattr(self, 'kernel_pod_name', None):
+                v1 = client.CoreV1Api()
+                try:
+                    v1.delete_namespaced_pod(
+                        name=self.kernel_pod_name, 
+                        namespace=self.kernel_namespace,
+                        grace_period_seconds=0  # Force immediate deletion
+                    )
+                    self.log.info(f"Deleted pod: {self.kernel_pod_name}")
+                except Exception as e:
+                    self.log.warning(f"Failed to delete pod {self.kernel_pod_name}: {e}")
+            
+            # Clean up any other Kubernetes resources if needed
+            # This could include services, config maps, etc.
+            
+        except Exception as e:
+            self.log.warning(f"Error during container resource cleanup: {e}")
