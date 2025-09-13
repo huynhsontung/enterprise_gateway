@@ -11,8 +11,10 @@ import os
 import signal
 import socket
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Union, override
+from typing import Any, Dict, Optional, override
 from socket import SHUT_RDWR
+
+from jupyter_client import KernelConnectionInfo
 
 from .base import EnterpriseProvisionerBase
 from ..processproxies.processproxy import ResponseManager
@@ -111,7 +113,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                 pass
             self.response_socket = None
             
-    def _extract_pid_info(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+    def _extract_pid_info(self, connection_info: KernelConnectionInfo) -> None:
         """
         Extract PID and PGID information from connection info.
         
@@ -145,7 +147,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         pass
         
     @override
-    async def launch_kernel(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
+    async def launch_kernel(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
         """
         Launch a remote kernel process.
         
@@ -198,7 +200,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         return connection_info
         
     @abstractmethod 
-    async def _launch_remote_process(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
+    async def _launch_remote_process(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
         """
         Launch the actual remote process.
         
@@ -214,7 +216,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         """
         pass
         
-    async def _setup_connection_info(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+    async def _setup_connection_info(self, connection_info: KernelConnectionInfo) -> None:
         """
         Setup connection information and tunneling if configured.
         
@@ -239,8 +241,8 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Setup communication port if available
         if 'comm_port' in connection_info:
             self.comm_port = int(connection_info['comm_port'])
-            
-    async def _setup_ssh_tunneling(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+
+    async def _setup_ssh_tunneling(self, connection_info: KernelConnectionInfo) -> None:
         """
         Setup SSH tunneling for remote kernel connections.
         
@@ -257,7 +259,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # For now, we'll log that tunneling setup is needed
         self.log.warning("SSH tunneling setup not yet implemented in provisioner")
         
-    def _update_connection(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+    def _update_connection(self, connection_info: KernelConnectionInfo) -> None:
         """
         Update connection information and notify kernel manager.
         
