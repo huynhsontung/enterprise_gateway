@@ -60,7 +60,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Process tracking attributes
         self.pid = 0
         self.pgid = 0
-        self.ip = None
+        # Note: self.ip is a traitlet defined in EnterpriseGatewayConfigMixin with default value
         
         # Initialize response management for remote communication
         self._setup_response_management()

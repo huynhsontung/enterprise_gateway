@@ -69,11 +69,16 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
     
     def __init__(self, **kwargs):
         """Initialize the Kubernetes Enterprise Gateway provisioner."""
+        # Extract Kubernetes-specific arguments before calling super()
+        self.kernel_namespace = kwargs.pop('kernel_namespace', None)
+        self.kernel_image = kwargs.pop('kernel_image', None)
+        self.kernel_executor_image = kwargs.pop('kernel_executor_image', None)
+        self.kernel_service_account_name = kwargs.pop('kernel_service_account_name', None)
+        
         super().__init__(**kwargs)
         
-        # Kubernetes-specific attributes
+        # Additional Kubernetes-specific attributes
         self.kernel_pod_name = None
-        self.kernel_namespace = None
         self.delete_kernel_namespace = False
         self.container_name = None
         self.assigned_node_ip = None
@@ -712,7 +717,7 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
         missing_vars = []
         
         def replace_var(match):
-            var_name = match.group(1)
+            var_name = match.group(1).strip()  # Strip whitespace from variable name
             if var_name in variables:
                 return str(variables[var_name])
             else:
@@ -720,19 +725,19 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
                 return match.group(0)  # Keep original placeholder
         
         try:
-            # Replace {{variable}} patterns
-            result = re.sub(r'\{\{(\w+)\}\}', replace_var, template_str)
+            # Replace {{variable}} patterns (allowing whitespace around variable name)
+            result = re.sub(r'\{\{\s*(\w+)\s*\}\}', replace_var, template_str)
             
-            # Check for unsupported template syntax
-            if '{%' in result or '{{' in result:
+            # Check for remaining unsupported template syntax (Jinja2 expressions)
+            if re.search(r'\{\{[^}]*[^}\w\s][^}]*\}\}', result) or '{%' in result:
                 self.log.warning(
-                    "Unsupported template syntax detected in KERNEL_POD_NAME"
+                    "Invalid template syntax detected - only simple variable substitution supported"
                 )
                 return None
             
             # Return None if any variables are missing
             if missing_vars:
-                self.log.warning(f"Missing template variables: {missing_vars}")
+                self.log.warning(f"Template substitution failed, missing variables: {missing_vars}")
                 return None
             
             return result
@@ -759,5 +764,12 @@ class KubernetesEnterpriseProvisioner(RemoteEnterpriseProvisioner):
             dns_name = dns_name[1:]
         while dns_name.endswith("-"):
             dns_name = dns_name[:-1]
+        
+        # Limit to 63 characters (DNS-1123 label limit)
+        if len(dns_name) > 63:
+            dns_name = dns_name[:63]
+            # Remove trailing hyphens again after truncation
+            while dns_name.endswith("-"):
+                dns_name = dns_name[:-1]
         
         return dns_name
