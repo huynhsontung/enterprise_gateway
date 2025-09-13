@@ -25,6 +25,7 @@ from zmq import IO_THREADS, MAX_SOCKETS, Context
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
 
 from ..processproxies.processproxy import BaseProcessProxyABC, LocalProcessProxy, RemoteProcessProxy
+from ..provisioners.factory import get_provisioner_config, create_provisioner_for_kernelspec, migrate_kernelspec_metadata
 from ..sessions.kernelsessionmanager import KernelSessionManager
 
 default_kernel_launch_timeout = float(os.getenv("EG_KERNEL_LAUNCH_TIMEOUT", "30"))
@@ -595,7 +596,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
 
     async def _launch_kernel(
         self, kernel_cmd: list[str], **kwargs: Any
-    ) -> BaseProcessProxyABC:
+    ) -> BaseProcessProxyABC | None:
         # Note: despite the under-bar prefix to this method, the jupyter_client comment says that
         # this method should be "[overridden] in a subclass to launch kernel subprocesses differently".
         # So that's what we've done.
@@ -621,11 +622,24 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             f"Launching kernel: '{display_name}' with command: {kernel_cmd}"
         )
 
-        if self.process_proxy:
-            proxy = await self.process_proxy.launch_process(kernel_cmd, **kwargs)
-            return proxy
+        if hasattr(self, 'provisioner') and self.provisioner is not None:
+            # Use the new provisioner system
+            self.log.debug("Launching kernel using provisioner")
+            connection_info = await self.provisioner.launch_kernel(kernel_cmd, **kwargs)
+            # Return None to indicate we're using provisioner (jupyter_client will handle it)
+            return None
+        elif self.process_proxy:
+            # Use legacy process proxy system  
+            self.log.debug("Launching kernel using process proxy")
+            if hasattr(self.process_proxy, 'launch_process') and callable(getattr(self.process_proxy, 'launch_process')):
+                proxy = await self.process_proxy.launch_process(kernel_cmd, **kwargs)  # type: ignore
+                return proxy
+            else:
+                # This is a provisioner masquerading as process_proxy
+                connection_info = await self.process_proxy.launch_kernel(kernel_cmd, **kwargs)  # type: ignore
+                return None
         else:
-            raise RuntimeError("No process proxy available")
+            raise RuntimeError("No provisioner or process proxy available")
 
     async def request_shutdown(self, restart: bool = False) -> None:
         """
@@ -799,12 +813,13 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             # the process proxy (will be LocalProcessProxy for default case) since the port selection will
             # handle the default case when the member ports aren't set anyway.
             if self.process_proxy:
-                ports = self.process_proxy.select_ports(5)
-                self.shell_port = ports[0]
-                self.iopub_port = ports[1]
-                self.stdin_port = ports[2]
-                self.hb_port = ports[3]
-                self.control_port = ports[4]
+                if hasattr(self.process_proxy, 'select_ports') and callable(getattr(self.process_proxy, 'select_ports')):
+                    ports = self.process_proxy.select_ports(5)  # type: ignore
+                    self.shell_port = ports[0]
+                    self.iopub_port = ports[1]
+                    self.stdin_port = ports[2]
+                    self.hb_port = ports[3]
+                    self.control_port = ports[4]
             super().write_connection_file(**kwargs)
         return None
 
@@ -814,10 +829,40 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
         If one exists, it instantiates an instance.  If a process proxy is not
         specified in the kernelspec, a LocalProcessProxy stanza is fabricated and
         instantiated.
+        
+        This method now supports both legacy process_proxy format and new 
+        kernel_provisioner format for backward compatibility.
         """
         if not self.kernel_spec:
             raise RuntimeError("No kernel spec available")
-            
+        
+        # First, try to migrate the kernelspec to new format if needed
+        migrate_kernelspec_metadata(self.kernel_spec)
+        
+        # Check if we should use the new provisioner system
+        if hasattr(self, 'provisioner') and self.provisioner is not None:
+            # Already have a provisioner from jupyter_client
+            self.log.debug("Using provisioner from jupyter_client")
+            return
+        
+        # Check for kernel_provisioner metadata first (new format)
+        provisioner_config = get_provisioner_config(self.kernel_spec)
+        if provisioner_config and "provisioner_name" in provisioner_config:
+            self.log.debug(f"Found kernel_provisioner metadata: {provisioner_config}")
+            # Create provisioner using factory
+            try:
+                self.provisioner = create_provisioner_for_kernelspec(
+                    self.kernel_spec, 
+                    kernel_manager=self
+                )
+                # For backward compatibility, also set process_proxy to the provisioner
+                self.process_proxy = self.provisioner
+                self.log.info(f"Created provisioner: {type(self.provisioner).__name__}")
+                return
+            except Exception as e:
+                self.log.warning(f"Failed to create provisioner: {e}, falling back to process proxy")
+        
+        # Fall back to legacy process proxy creation
         process_proxy_cfg = get_process_proxy_config(self.kernel_spec)
         process_proxy_class_name = process_proxy_cfg.get("class_name")
         

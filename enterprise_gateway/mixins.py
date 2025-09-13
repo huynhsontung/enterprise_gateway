@@ -8,11 +8,27 @@ import json
 import os
 import ssl
 import traceback
-from distutils.util import strtobool
 from http.client import responses
 from typing import Any, Awaitable, ClassVar, Dict, List, Optional, Set
 
 from tornado import web
+
+
+def strtobool(val: str) -> bool:
+    """Convert a string representation of truth to True or False.
+    
+    Replacement for deprecated distutils.util.strtobool.
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'; 
+    false values are 'n', 'no', 'f', 'false', 'off', and '0'.
+    Raises ValueError if 'val' is anything else.
+    """
+    val = val.lower()
+    if val in {'y', 'yes', 't', 'true', 'on', '1'}:
+        return True
+    elif val in {'n', 'no', 'f', 'false', 'off', '0'}:
+        return False
+    else:
+        raise ValueError(f"invalid truth value {val!r}")
 from tornado.log import LogFormatter
 from traitlets import (
     Bool,

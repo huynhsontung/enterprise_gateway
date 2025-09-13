@@ -53,6 +53,10 @@ Homepage = "http://github.com/jupyter/enterprise_gateway"
 [project.scripts]
 jupyter-enterprisegateway = "enterprise_gateway.enterprisegatewayapp:launch_instance"
 
+[project.entry-points."jupyter_client.kernel_provisioners"]
+local-enterprise-provisioner = "enterprise_gateway.services.provisioners.local:LocalEnterpriseProvisioner"
+remote-enterprise-provisioner = "enterprise_gateway.services.provisioners.remote:RemoteEnterpriseProvisioner"
+
 [project.optional-dependencies]
 test = [
   "coverage",
