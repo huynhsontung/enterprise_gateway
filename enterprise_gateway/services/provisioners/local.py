@@ -10,7 +10,7 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, override
 
 from jupyter_client.provisioning.local_provisioner import LocalProvisioner
 from jupyter_client import localinterfaces
@@ -40,6 +40,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         # Local process tracking
         self.pgid = 0
         
+    @override
     def detect_launch_failure(self) -> None:
         """
         Detect if local kernel launch has failed.
@@ -61,6 +62,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
                 )
                 self.log_and_raise(http_status_code=500, reason=error_message)
         
+    @override
     async def launch_kernel(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
         """
         Launch a local kernel process.
@@ -103,6 +105,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
                     
         return connection_info
         
+    @override
     async def get_provisioner_info(self) -> Dict[str, Any]:
         """
         Capture provisioner information for session persistence.
@@ -132,6 +135,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
                     
         return info
         
+    @override
     async def load_provisioner_info(self, provisioner_info: Dict[str, Any]) -> None:
         """
         Load provisioner information from session persistence.
@@ -156,6 +160,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
             if 'pgid' in process_info:
                 self.pgid = process_info['pgid']
             
+    @override
     async def cleanup(self, restart: bool = False) -> None:
         """
         Clean up local kernel resources.
@@ -189,6 +194,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         # Reset local state
         self.pgid = 0
         
+    @override
     async def send_signal(self, signum: int) -> None:
         """
         Send signal to local kernel process.
@@ -216,6 +222,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
             self.log.warning(f"No process or process group available to send signal {signum}")
             
     @property
+    @override
     def has_process(self) -> bool:
         """
         Check if provisioner is managing a process.

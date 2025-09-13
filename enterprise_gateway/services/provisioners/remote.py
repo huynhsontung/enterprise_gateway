@@ -11,7 +11,7 @@ import os
 import signal
 import socket
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, override
 from socket import SHUT_RDWR
 
 from .base import EnterpriseProvisionerBase
@@ -108,6 +108,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         """
         pass
         
+    @override
     async def launch_kernel(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
         """
         Launch a remote kernel process.
@@ -292,6 +293,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         else:
             self.log.debug(f"Invalid comm port, not sending request '{request}'")
         
+    @override
     async def get_provisioner_info(self) -> Dict[str, Any]:
         """
         Capture provisioner information for session persistence.
@@ -316,6 +318,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         
         return info
         
+    @override
     async def load_provisioner_info(self, provisioner_info: Dict[str, Any]) -> None:
         """
         Load provisioner information from session persistence.
@@ -340,6 +343,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             self.log.debug("Re-establishing SSH tunneling from session persistence")
             # This would re-establish tunnels
             
+    @override
     async def cleanup(self, restart: bool = False) -> None:
         """
         Clean up remote kernel resources.
@@ -380,6 +384,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                 
         self.tunnel_processes.clear()
         
+    @override
     async def send_signal(self, signum: int) -> None:
         """
         Send signal to remote kernel process.
@@ -409,7 +414,71 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Fall back to parent implementation
         await super().send_signal(signum)
         
+    @override
+    async def poll(self) -> Optional[int]:
+        """
+        Poll remote kernel process for termination status.
+        
+        Returns:
+            None if process is still running, exit code if terminated
+        """
+        # This will be implemented by subclasses to handle
+        # environment-specific process polling
+        self.log.debug("Remote process polling - placeholder implementation")
+        return None
+        
+    @override
+    async def wait(self) -> Optional[int]:
+        """
+        Wait for remote kernel process to terminate.
+        
+        Returns:
+            Exit code when process terminates
+        """
+        # This will be implemented by subclasses to handle
+        # environment-specific process waiting
+        self.log.debug("Remote process waiting - placeholder implementation")
+        return 0
+        
+    @override
+    async def terminate(self, restart: bool = False) -> None:
+        """
+        Terminate remote kernel process.
+        
+        Args:
+            restart: Whether this termination is for a restart operation
+        """
+        self.log.debug(f"Terminating remote kernel (restart={restart})")
+        
+        # Send SIGTERM signal first
+        try:
+            await self.send_signal(signal.SIGTERM)
+        except Exception as e:
+            self.log.debug(f"Error sending SIGTERM: {e}")
+            
+        # Give process time to terminate gracefully
+        await asyncio.sleep(1.0)
+        
+    @override
+    async def kill(self, restart: bool = False) -> None:
+        """
+        Forcefully kill remote kernel process.
+        
+        Args:
+            restart: Whether this kill is for a restart operation
+        """
+        self.log.debug(f"Killing remote kernel (restart={restart})")
+        
+        # Send SIGKILL signal
+        try:
+            # Use SIGKILL if available (Unix), otherwise SIGTERM (Windows)
+            kill_signal = getattr(signal, 'SIGKILL', signal.SIGTERM)
+            await self.send_signal(kill_signal)
+        except Exception as e:
+            self.log.debug(f"Error sending kill signal: {e}")
+        
     @property
+    @override
     def has_process(self) -> bool:
         """
         Check if provisioner is managing a process.
