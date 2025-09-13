@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import socket
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Union
+from socket import SHUT_RDWR
 
 from .base import EnterpriseProvisionerBase
 
@@ -44,15 +46,54 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.tunnel_processes = {}
         self.response_address = None
         self.public_key = None
+        self.response_socket = None
+        
+        # Process tracking attributes
+        self.pid = 0
+        self.pgid = 0
+        self.ip = None
         
         # Initialize response management for remote communication
         self._setup_response_management()
         
     def _setup_response_management(self) -> None:
         """Setup response socket management for remote communication."""
-        # This will be implemented to handle response sockets
-        # Similar to ResponseManager in the original code
+        # This will implement response socket management
+        # For now, we'll set up the basic structure
+        # TODO: Integrate with ResponseManager when available
         pass
+        
+    def _close_response_socket(self) -> None:
+        """Close the response socket if it exists."""
+        if self.response_socket:
+            try:
+                self.log.debug("Response socket still open, closing it")
+                self.response_socket.shutdown(SHUT_RDWR)
+                self.response_socket.close()
+            except OSError:
+                # Tolerate exceptions since we don't need this socket and want to continue
+                pass
+            self.response_socket = None
+            
+    def _extract_pid_info(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+        """
+        Extract PID and PGID information from connection info.
+        
+        Args:
+            connection_info: Connection information from remote kernel
+        """
+        # Extract process information if available
+        if 'pid' in connection_info:
+            self.pid = int(connection_info['pid'])
+            self.log.debug(f"Extracted PID: {self.pid}")
+            
+        if 'pgid' in connection_info:
+            self.pgid = int(connection_info['pgid'])
+            self.log.debug(f"Extracted PGID: {self.pgid}")
+            
+        # Update IP if we have process information and it's remote
+        if (self.pid or self.pgid) and self.assigned_ip:
+            self.ip = self.assigned_ip
         
     @abstractmethod
     async def confirm_remote_startup(self) -> bool:
@@ -80,15 +121,22 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         """
         self.log.info(f"Launching remote kernel with command: {cmd}")
         
+        # Set start time for timeout tracking
+        self.start_time = self.get_current_time()
+        
         # Call parent pre_launch for Enterprise Gateway setup
         kwargs = await self.pre_launch(**kwargs)
         
         # Launch the remote process (implemented by subclasses)
         connection_info = await self._launch_remote_process(cmd, **kwargs)
         
+        # Extract process information from connection info
+        self._extract_pid_info(connection_info)
+        
         # Confirm remote startup
         startup_confirmed = await self.confirm_remote_startup()
         if not startup_confirmed:
+            self.detect_launch_failure()
             raise RuntimeError("Failed to confirm remote kernel startup")
             
         # Setup connection info and tunneling if needed
@@ -161,6 +209,89 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # For now, we'll log that tunneling setup is needed
         self.log.warning("SSH tunneling setup not yet implemented in provisioner")
         
+    def _update_connection(self, connection_info: Dict[str, Union[int, str, bytes]]) -> None:
+        """
+        Update connection information and notify kernel manager.
+        
+        Args:
+            connection_info: Connection information to update
+        """
+        if connection_info:
+            # Extract process information
+            self._extract_pid_info(connection_info)
+            
+            # Update kernel manager with connection info
+            # TODO: Integrate with kernel manager's load_connection_info
+            self.log.debug(
+                f"Received connection info for KernelID '{self.kernel_id}' "
+                f"from host '{self.assigned_host}': {connection_info}..."
+            )
+        else:
+            error_message = (
+                f"Unexpected runtime encountered for Kernel ID '{self.kernel_id}' - "
+                "connection information is null!"
+            )
+            self.log_and_raise(http_status_code=500, reason=error_message)
+            
+        # Close response socket as it's no longer needed
+        self._close_response_socket()
+        
+    async def receive_connection_info(self) -> bool:
+        """
+        Monitor response address for connection info from remote kernel launcher.
+        
+        Returns:
+            True if connection info received successfully
+        """
+        # This will implement the response socket monitoring logic
+        # For now, return True to indicate success
+        self.log.debug("receive_connection_info: placeholder implementation")
+        return True
+        
+    def detect_launch_failure(self) -> None:
+        """
+        Detect if remote kernel launch has failed.
+        """
+        # TODO: Implement remote launch failure detection
+        # This might check for:
+        # - Process exit codes
+        # - Connection timeouts  
+        # - Response socket errors
+        self.log.warning("Remote launch failure detection not yet implemented")
+        
+    async def _send_listener_request(self, request: Dict[str, Any], shutdown_socket: bool = False) -> None:
+        """
+        Send request to kernel launcher listener.
+        
+        Args:
+            request: Request to send
+            shutdown_socket: Whether to shutdown socket after sending
+        """
+        if self.comm_port > 0 and self.comm_ip:
+            try:
+                self.log.debug(f"Sending request to {self.comm_ip}:{self.comm_port}: {request}")
+                
+                # Create socket and send request
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    sock.connect((self.comm_ip, self.comm_port))
+                    
+                    # Send the request (simplified implementation)
+                    import json
+                    message = json.dumps(request).encode()
+                    sock.sendall(message)
+                    
+                    if shutdown_socket:
+                        sock.shutdown(SHUT_RDWR)
+                        
+                finally:
+                    sock.close()
+                    
+            except Exception as e:
+                self.log.warning(f"Exception sending request to listener: {e}")
+        else:
+            self.log.debug(f"Invalid comm port, not sending request '{request}'")
+        
     async def get_provisioner_info(self) -> Dict[str, Any]:
         """
         Capture provisioner information for session persistence.
@@ -178,6 +309,9 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             'comm_ip': self.comm_ip,
             'comm_port': self.comm_port,
             'tunneled_connect_info': self.tunneled_connect_info,
+            'pid': self.pid,
+            'pgid': self.pgid,
+            'ip': self.ip,
         })
         
         return info
@@ -197,6 +331,9 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.comm_ip = provisioner_info.get('comm_ip')
         self.comm_port = provisioner_info.get('comm_port', 0)
         self.tunneled_connect_info = provisioner_info.get('tunneled_connect_info')
+        self.pid = provisioner_info.get('pid', 0)
+        self.pgid = provisioner_info.get('pgid', 0)
+        self.ip = provisioner_info.get('ip')
         
         # Re-establish tunneling if it was in use
         if self.tunneled_connect_info:
@@ -214,6 +351,9 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         
         # Cleanup tunnels
         await self._cleanup_tunnels()
+        
+        # Close response socket
+        self._close_response_socket()
         
         # Reset remote state
         self.assigned_ip = None
@@ -247,12 +387,27 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         Args:
             signum: Signal number to send
         """
-        # This will be implemented by subclasses to handle
-        # environment-specific signal sending
         self.log.debug(f"Sending signal {signum} to remote kernel")
         
-        # For now, log that signal sending needs implementation
-        self.log.warning("Remote signal sending not yet implemented in provisioner")
+        # Try to send signal via communication socket first
+        if self.comm_port > 0:
+            try:
+                request = {
+                    'action': 'signal',
+                    'signal': signum,
+                    'kernel_id': self.kernel_id
+                }
+                await self._send_listener_request(request)
+                return
+            except Exception as e:
+                if isinstance(e, ConnectionRefusedError):
+                    self.log.debug("Connection refused, no process listening, cannot send signal.")
+                    return
+                else:
+                    self.log.warning(f"Unexpected exception sending signal ({signum}): {e}")
+        
+        # Fall back to parent implementation
+        await super().send_signal(signum)
         
     @property
     def has_process(self) -> bool:

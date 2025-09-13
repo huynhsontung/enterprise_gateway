@@ -6,12 +6,15 @@ including session persistence, authorization, and port management.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import signal
+import socket
 from typing import Any, Dict, Optional, Union
 from abc import ABC, abstractmethod
 
 from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
-from traitlets import Bool, Int, Set, Unicode
+from traitlets import Bool, Float, Int, Set, Unicode
 
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
 
@@ -50,6 +53,12 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         help="""Whether to enable user impersonation for kernel processes."""
     )
     
+    kernel_launch_timeout = Float(
+        default_value=40.0,
+        config=True,
+        help="""Time in seconds to wait for kernel to start."""
+    )
+    
     def __init__(self, **kwargs):
         """Initialize the Enterprise Gateway provisioner."""
         super().__init__(**kwargs)
@@ -61,6 +70,14 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         
         # Initialize authorization
         self._setup_authorization()
+        
+        # Response management for remote communication
+        self.response_address = None
+        self.public_key = None
+        
+        # Timeout and error handling
+        self.start_time = None
+        self._setup_response_management()
         
     def _validate_port_range(self) -> None:
         """Validate and parse the port range configuration."""
@@ -82,6 +99,12 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
     def _setup_authorization(self) -> None:
         """Setup authorization from kernel manager and proxy config."""
         # This will be implemented to integrate with kernel manager authorization
+        pass
+        
+    def _setup_response_management(self) -> None:
+        """Setup response management for remote communication."""
+        # Initialize response management
+        # This will be enhanced when ResponseManager is available
         pass
         
     def _enforce_authorization(self, **kwargs) -> None:
@@ -191,3 +214,64 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
             
         kwargs['env'] = env
         return kwargs
+        
+    async def handle_timeout(self) -> None:
+        """
+        Check if kernel launch timeout has been exceeded.
+        
+        This method should be called periodically during kernel launch
+        to detect timeout conditions.
+        """
+        if self.start_time is None:
+            return
+            
+        current_time = self.get_current_time()
+        time_interval = self.get_time_diff(self.start_time, current_time)
+        
+        if time_interval > self.kernel_launch_timeout:
+            error_message = (
+                f"Kernel launch timeout exceeded ({self.kernel_launch_timeout}s) "
+                f"for KernelID '{self.kernel_id}'"
+            )
+            # Kill the kernel process
+            await self.kill(restart=False)
+            raise TimeoutError(error_message)
+            
+    def detect_launch_failure(self) -> None:
+        """
+        Detect if kernel launch has failed.
+        
+        This method should be called to check for launch failures
+        and provide appropriate error messages.
+        """
+        # This will be implemented by subclasses with specific launch failure detection
+        pass
+        
+    @staticmethod
+    def get_current_time() -> float:
+        """Return the current time stamp in UTC time epoch format in milliseconds."""
+        import time
+        return time.time() * 1000
+        
+    @staticmethod
+    def get_time_diff(time1: float, time2: float) -> float:
+        """Return the difference between two timestamps in seconds."""
+        return abs(time2 - time1) / 1000.0
+        
+    def log_and_raise(self, http_status_code: Optional[int] = None, reason: Optional[str] = None) -> None:
+        """
+        Log an error message and raise an appropriate exception.
+        
+        Args:
+            http_status_code: HTTP status code for the error
+            reason: Error message
+        """
+        error_message = reason or "Unknown error occurred"
+        self.log.error(error_message)
+        
+        if http_status_code == 403:
+            raise PermissionError(error_message)
+        elif http_status_code == 500:
+            raise RuntimeError(error_message)
+        else:
+            raise Exception(error_message)

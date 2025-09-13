@@ -29,7 +29,7 @@ from traitlets import (
 )
 from traitlets import List as ListTrait
 from traitlets import Set as SetTrait
-from traitlets.config import Configurable
+from traitlets.config import LoggingConfigurable
 
 
 class CORSMixin:
@@ -158,7 +158,7 @@ class JSONErrorsMixin:
         self.finish(json.dumps(reply))
 
 
-class EnterpriseGatewayConfigMixin(Configurable):
+class EnterpriseGatewayConfigMixin(LoggingConfigurable):
     """A mixin for enterprise gateway config."""
 
     # Server IP / PORT binding

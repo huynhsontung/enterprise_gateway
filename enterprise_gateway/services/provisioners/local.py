@@ -6,7 +6,9 @@ replacing LocalProcessProxy.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import signal
 import subprocess
 from typing import Any, Dict, Optional, Union
 
@@ -35,6 +37,30 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         # Set IP to localhost for local kernels
         self.ip = localinterfaces.LOCALHOST
         
+        # Local process tracking
+        self.pgid = 0
+        
+    def detect_launch_failure(self) -> None:
+        """
+        Detect if local kernel launch has failed.
+        
+        Checks the local process for failure conditions.
+        """
+        if hasattr(self, 'process') and self.process:
+            poll_result = self.process.poll()
+            if poll_result and poll_result > 0:
+                # Process exited with error code
+                try:
+                    self.process.wait()
+                except subprocess.TimeoutExpired:
+                    pass
+                
+                error_message = (
+                    f"Local kernel launch failed for KernelID: {self.kernel_id} "
+                    f"with exit code: {poll_result}. Check Enterprise Gateway log for more information."
+                )
+                self.log_and_raise(http_status_code=500, reason=error_message)
+        
     async def launch_kernel(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
         """
         Launch a local kernel process.
@@ -51,6 +77,9 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         # Call parent pre_launch for Enterprise Gateway setup
         kwargs = await self.pre_launch(**kwargs)
         
+        # Set start time for timeout tracking
+        self.start_time = self.get_current_time()
+        
         # Use LocalProvisioner's launch mechanism
         connection_info = await super().launch_kernel(cmd, **kwargs)
         
@@ -64,10 +93,13 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
             # Track process group if available
             if hasattr(os, "getpgid"):
                 try:
-                    pgid = os.getpgid(self.process.pid)  # type: ignore
-                    self.log.debug(f"Process group ID: {pgid}")
+                    self.pgid = os.getpgid(self.process.pid)  # type: ignore
+                    self.log.debug(f"Process group ID: {self.pgid}")
                 except OSError:
                     pass
+                    
+            # Check for immediate launch failure
+            self.detect_launch_failure()
                     
         return connection_info
         
@@ -90,18 +122,13 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         if hasattr(self, 'process') and self.process:
             info.update({
                 'pid': self.process.pid,
+                'pgid': self.pgid,
                 'process_info': {
                     'pid': self.process.pid,
+                    'pgid': self.pgid,
                     'ip': self.ip,
                 }
             })
-            
-            # Add process group if available
-            if hasattr(os, "getpgid"):
-                try:
-                    info['process_info']['pgid'] = os.getpgid(self.process.pid)  # type: ignore
-                except OSError:
-                    pass
                     
         return info
         
@@ -117,12 +144,17 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         # Restore local-specific state
         if 'ip' in provisioner_info:
             self.ip = provisioner_info['ip']
+        if 'pgid' in provisioner_info:
+            self.pgid = provisioner_info['pgid']
             
         # Note: We cannot restore the actual process object from persistence
         # This is expected for session recovery scenarios
         if 'process_info' in provisioner_info:
             process_info = provisioner_info['process_info']
             self.log.debug(f"Loaded process info: {process_info}")
+            # Restore pgid if available
+            if 'pgid' in process_info:
+                self.pgid = process_info['pgid']
             
     async def cleanup(self, restart: bool = False) -> None:
         """
@@ -133,8 +165,64 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         """
         self.log.debug(f"Cleaning up local kernel (restart={restart})")
         
+        # Cleanup process group if we have one
+        if self.pgid > 0 and hasattr(os, 'killpg'):
+            try:
+                self.log.debug(f"Cleaning up process group {self.pgid}")
+                # Send SIGTERM to process group (Unix only)
+                os.killpg(self.pgid, signal.SIGTERM)  # type: ignore
+                # Give processes time to terminate gracefully
+                await asyncio.sleep(0.5)
+                # Send SIGKILL if still running
+                try:
+                    if hasattr(signal, 'SIGKILL'):
+                        os.killpg(self.pgid, signal.SIGKILL)  # type: ignore
+                except ProcessLookupError:
+                    # Process group already terminated
+                    pass
+            except (OSError, ProcessLookupError) as e:
+                self.log.debug(f"Process group cleanup error (normal): {e}")
+        
         # Call parent cleanup
         await super().cleanup(restart)
         
-        # Additional Enterprise Gateway cleanup if needed
-        # (Most cleanup is handled by LocalProvisioner)
+        # Reset local state
+        self.pgid = 0
+        
+    async def send_signal(self, signum: int) -> None:
+        """
+        Send signal to local kernel process.
+        
+        Args:
+            signum: Signal number to send
+        """
+        self.log.debug(f"Sending signal {signum} to local kernel")
+        
+        if hasattr(self, 'process') and self.process:
+            try:
+                # Try to send signal to the process
+                self.process.send_signal(signum)
+                self.log.debug(f"Signal {signum} sent to PID {self.process.pid}")
+            except (OSError, ProcessLookupError) as e:
+                self.log.debug(f"Could not send signal to process: {e}")
+        elif self.pgid > 0 and hasattr(os, 'killpg'):
+            try:
+                # Fall back to process group if available (Unix only)
+                os.killpg(self.pgid, signum)  # type: ignore
+                self.log.debug(f"Signal {signum} sent to process group {self.pgid}")
+            except (OSError, ProcessLookupError) as e:
+                self.log.debug(f"Could not send signal to process group: {e}")
+        else:
+            self.log.warning(f"No process or process group available to send signal {signum}")
+            
+    @property
+    def has_process(self) -> bool:
+        """
+        Check if provisioner is managing a process.
+        
+        Returns:
+            True if managing a process, False otherwise
+        """
+        if hasattr(self, 'process') and self.process:
+            return self.process.poll() is None
+        return False
