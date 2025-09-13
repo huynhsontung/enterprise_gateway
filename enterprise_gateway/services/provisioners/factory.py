@@ -10,6 +10,7 @@ from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
 
 from .local import LocalEnterpriseProvisioner
 from .remote import RemoteEnterpriseProvisioner
+from .kubernetes import KubernetesEnterpriseProvisioner
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 PROCESS_PROXY_TO_PROVISIONER_MAP = {
     "enterprise_gateway.services.processproxies.processproxy.LocalProcessProxy": LocalEnterpriseProvisioner,
     "enterprise_gateway.services.processproxies.yarn.YarnProcessProxy": RemoteEnterpriseProvisioner,  # Will be YarnEnterpriseProvisioner later
-    "enterprise_gateway.services.processproxies.k8s.KubernetesProcessProxy": RemoteEnterpriseProvisioner,  # Will be KubernetesEnterpriseProvisioner later
+    "enterprise_gateway.services.processproxies.k8s.KubernetesProcessProxy": KubernetesEnterpriseProvisioner,
     "enterprise_gateway.services.processproxies.docker.DockerProcessProxy": RemoteEnterpriseProvisioner,  # Will be DockerEnterpriseProvisioner later
     "enterprise_gateway.services.processproxies.distributed.DistributedProcessProxy": RemoteEnterpriseProvisioner,
     "enterprise_gateway.services.processproxies.conductor.ConductorClusterProcessProxy": RemoteEnterpriseProvisioner,
@@ -29,9 +30,9 @@ PROCESS_PROXY_TO_PROVISIONER_MAP = {
 PROVISIONER_NAME_TO_CLASS_MAP = {
     "local-enterprise-provisioner": LocalEnterpriseProvisioner,
     "remote-enterprise-provisioner": RemoteEnterpriseProvisioner,
+    "kubernetes-enterprise-provisioner": KubernetesEnterpriseProvisioner,
     # Future specific provisioners:
     # "yarn-enterprise-provisioner": YarnEnterpriseProvisioner,
-    # "kubernetes-enterprise-provisioner": KubernetesEnterpriseProvisioner,
     # "docker-enterprise-provisioner": DockerEnterpriseProvisioner,
 }
 
@@ -94,6 +95,8 @@ def convert_process_proxy_to_provisioner_config(process_proxy_config: Dict[str, 
         # Determine provisioner name based on class
         if provisioner_class == LocalEnterpriseProvisioner:
             provisioner_name = "local-enterprise-provisioner"
+        elif provisioner_class == KubernetesEnterpriseProvisioner:
+            provisioner_name = "kubernetes-enterprise-provisioner"
         else:
             provisioner_name = "remote-enterprise-provisioner"
             

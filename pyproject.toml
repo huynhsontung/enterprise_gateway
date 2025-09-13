@@ -56,6 +56,7 @@ jupyter-enterprisegateway = "enterprise_gateway.enterprisegatewayapp:launch_inst
 [project.entry-points."jupyter_client.kernel_provisioners"]
 local-enterprise-provisioner = "enterprise_gateway.services.provisioners.local:LocalEnterpriseProvisioner"
 remote-enterprise-provisioner = "enterprise_gateway.services.provisioners.remote:RemoteEnterpriseProvisioner"
+kubernetes-enterprise-provisioner = "enterprise_gateway.services.provisioners.kubernetes:KubernetesEnterpriseProvisioner"
 
 [project.optional-dependencies]
 test = [
