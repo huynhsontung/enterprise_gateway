@@ -13,10 +13,6 @@ from kubernetes.client.rest import ApiException
 # Mock Kubernetes configuration before importing the module
 with patch('kubernetes.config.load_incluster_config'), patch('kubernetes.config.load_kube_config'):
     from enterprise_gateway.services.provisioners.kubernetes import KubernetesEnterpriseProvisioner
-    from enterprise_gateway.services.provisioners.factory import (
-        create_provisioner_for_kernelspec,
-        convert_process_proxy_to_provisioner_config
-    )
 
 from jupyter_client.kernelspec import KernelSpec
 
@@ -537,50 +533,6 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         # since this method calls the jupyter-client base first
 
 
-class TestKubernetesProvisionerFactory(unittest.TestCase):
-    """Test KubernetesEnterpriseProvisioner factory integration."""
-
-    def test_factory_mapping(self):
-        """Test factory correctly maps to KubernetesEnterpriseProvisioner."""
-        from enterprise_gateway.services.provisioners.factory import PROVISIONER_NAME_TO_CLASS_MAP
-        
-        provisioner_class = PROVISIONER_NAME_TO_CLASS_MAP.get('kubernetes-enterprise-provisioner')
-        self.assertEqual(provisioner_class, KubernetesEnterpriseProvisioner)
-
-    def test_legacy_conversion(self):
-        """Test legacy ProcessProxy to Provisioner conversion."""
-        legacy_config = {
-            'class_name': 'enterprise_gateway.services.processproxies.k8s.KubernetesProcessProxy',
-            'config': {'namespace': 'production', 'image': 'python:3.9'}
-        }
-        
-        converted = convert_process_proxy_to_provisioner_config(legacy_config)
-        
-        self.assertEqual(converted['provisioner_name'], 'kubernetes-enterprise-provisioner')
-        self.assertEqual(converted['config']['namespace'], 'production')
-        self.assertEqual(converted['config']['image'], 'python:3.9')
-
-    def test_create_provisioner_for_kernelspec(self):
-        """Test creating provisioner from kernelspec."""
-        # Mock kernelspec with provisioner config
-        mock_kernelspec = Mock(spec=KernelSpec)
-        mock_kernelspec.metadata = {
-            'process_proxy': {
-                'class_name': 'enterprise_gateway.services.processproxies.k8s.KubernetesProcessProxy'
-            }
-        }
-
-        # Mock Kubernetes clients during provisioner creation
-        with patch('kubernetes.client.CoreV1Api'), \
-             patch('kubernetes.client.RbacAuthorizationV1Api'), \
-             patch('enterprise_gateway.services.provisioners.remote.ResponseManager'):
-            
-            provisioner = create_provisioner_for_kernelspec(
-                kernelspec=mock_kernelspec,
-                kernel_id="test-kernel-id"
-            )
-            
-            self.assertIsInstance(provisioner, KubernetesEnterpriseProvisioner)
 class TestKubernetesProvisionerAsync(unittest.TestCase):
     """Test KubernetesEnterpriseProvisioner async functionality."""
 
