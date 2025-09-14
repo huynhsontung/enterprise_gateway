@@ -66,7 +66,8 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         super().__init__(**kwargs)
         self.kernel_id = kernel_id
         self.kernel_spec = kernel_spec
-        self.kernel_manager: Optional[KernelManager] = self.parent
+        if hasattr(self, 'parent') and isinstance(self.parent, KernelManager):
+            self.kernel_manager: Optional[KernelManager] = self.parent
 
         # Initialize port range
         self.lower_port = 0

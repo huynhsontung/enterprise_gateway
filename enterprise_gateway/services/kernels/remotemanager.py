@@ -842,6 +842,10 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             # For backward compatibility, also set process_proxy to the provisioner
             self.process_proxy = self.provisioner
             return
+
+        kernel_id = self.kernel_id or os.path.basename(self.connection_file).replace(
+            "kernel-", ""
+        ).replace(".json", "")
         
         try:
             # Get the singleton factory instance
@@ -849,7 +853,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             
             # Create provisioner using official jupyter_client API
             self.provisioner = factory.create_provisioner_instance(
-                kernel_id=self.kernel_id,
+                kernel_id=kernel_id,
                 kernel_spec=self.kernel_spec,
                 parent=self
             )
