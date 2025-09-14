@@ -25,7 +25,7 @@ from zmq import IO_THREADS, MAX_SOCKETS, Context
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
 
 from ..processproxies.processproxy import BaseProcessProxyABC, LocalProcessProxy, RemoteProcessProxy
-from ..provisioners.factory import get_provisioner_config, create_provisioner_for_kernelspec, migrate_kernelspec_metadata
+from jupyter_client.provisioning.factory import KernelProvisionerFactory
 from ..sessions.kernelsessionmanager import KernelSessionManager
 
 default_kernel_launch_timeout = float(os.getenv("EG_KERNEL_LAUNCH_TIMEOUT", "30"))
@@ -536,7 +536,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
              keyword arguments that are passed down to build the kernel_cmd
              and launching the kernel (e.g. Popen kwargs).
         """
-        self._get_process_proxy()
+        self._get_process_proxy_or_kernel_provisioner()
         self._capture_user_overrides(**kwargs)
         await super().start_kernel(**kwargs)
 
@@ -823,44 +823,46 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             super().write_connection_file(**kwargs)
         return None
 
-    def _get_process_proxy(self) -> None:
+    def _get_process_proxy_or_kernel_provisioner(self) -> None:
         """
-        Reads the associated kernelspec and to see if has a process proxy stanza.
-        If one exists, it instantiates an instance.  If a process proxy is not
-        specified in the kernelspec, a LocalProcessProxy stanza is fabricated and
-        instantiated.
+        Setup kernel provisioner using jupyter_client's official KernelProvisionerFactory.
         
-        This method now supports both legacy process_proxy format and new 
-        kernel_provisioner format for backward compatibility.
+        This method uses the standard jupyter_client provisioner creation mechanism
+        via KernelProvisionerFactory.create_provisioner_instance(), which handles
+        entry point discovery, default provisioner creation, and proper error handling.
+        
+        Falls back to legacy process_proxy format for backward compatibility.
         """
         if not self.kernel_spec:
             raise RuntimeError("No kernel spec available")
         
-        # First, try to migrate the kernelspec to new format if needed
-        migrate_kernelspec_metadata(self.kernel_spec)
-        
-        # Check if we should use the new provisioner system
+        # Check if jupyter_client has already created a provisioner
         if hasattr(self, 'provisioner') and self.provisioner is not None:
-            # Already have a provisioner from jupyter_client
             self.log.debug("Using provisioner from jupyter_client")
+            # For backward compatibility, also set process_proxy to the provisioner
+            self.process_proxy = self.provisioner
             return
         
-        # Check for kernel_provisioner metadata first (new format)
-        provisioner_config = get_provisioner_config(self.kernel_spec)
-        if provisioner_config and "provisioner_name" in provisioner_config:
-            self.log.debug(f"Found kernel_provisioner metadata: {provisioner_config}")
-            # Create provisioner using factory
-            try:
-                self.provisioner = create_provisioner_for_kernelspec(
-                    self.kernel_spec, 
-                    kernel_manager=self
-                )
-                # For backward compatibility, also set process_proxy to the provisioner
-                self.process_proxy = self.provisioner
-                self.log.info(f"Created provisioner: {type(self.provisioner).__name__}")
-                return
-            except Exception as e:
-                self.log.warning(f"Failed to create provisioner: {e}, falling back to process proxy")
+        try:
+            # Get the singleton factory instance
+            factory = KernelProvisionerFactory.instance()
+            
+            # Create provisioner using official jupyter_client API
+            self.provisioner = factory.create_provisioner_instance(
+                kernel_id=self.kernel_id,
+                kernel_spec=self.kernel_spec,
+                parent=self
+            )
+            
+            # For backward compatibility, also set process_proxy to the provisioner
+            self.process_proxy = self.provisioner
+            self.log.info(f"Created provisioner via KernelProvisionerFactory: {type(self.provisioner).__name__}")
+            return
+            
+        except (ModuleNotFoundError, ImportError) as e:
+            self.log.warning(f"Failed to create provisioner via KernelProvisionerFactory: {e}, falling back to legacy methods")
+        except Exception as e:
+            self.log.warning(f"Unexpected error creating provisioner: {e}, falling back to legacy methods")
         
         # Fall back to legacy process proxy creation
         process_proxy_cfg = get_process_proxy_config(self.kernel_spec)

@@ -11,12 +11,16 @@ import os
 import signal
 import socket
 from typing import Any, Dict, Optional, Union
-from abc import ABC, abstractmethod
 
 from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
-from traitlets import Bool, Float, Int, Set, Unicode
+from jupyter_client.manager import KernelManager
+from jupyter_client.kernelspec import KernelSpec
+from traitlets import Bool, Float, Int, Set, Unicode, default
 
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
+from enterprise_gateway.services.sessions.kernelsessionmanager import KernelSessionManager
+
+env_pop_list = ["EG_REMOTE_PWD", "LS_COLORS"]
 
 
 class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMixin):
@@ -47,22 +51,23 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         help="""Port range to use for kernel ports (e.g., '10000:10100')."""
     )
     
-    impersonation_enabled = Bool(
-        default_value=False,
-        config=True,
-        help="""Whether to enable user impersonation for kernel processes."""
-    )
-    
+    kernel_launch_timeout_env = "EG_KERNEL_LAUNCH_TIMEOUT"
     kernel_launch_timeout = Float(
-        default_value=40.0,
         config=True,
-        help="""Time in seconds to wait for kernel to start."""
+        help="""Time in seconds to wait for kernel to start (EG_KERNEL_LAUNCH_TIMEOUT env var)."""
     )
     
-    def __init__(self, **kwargs):
+    @default("kernel_launch_timeout")
+    def _kernel_launch_timeout_default(self):
+        return float(os.environ.get(self.kernel_launch_timeout_env, 30.0))
+
+    def __init__(self, kernel_id: str, kernel_spec: KernelSpec, **kwargs):
         """Initialize the Enterprise Gateway provisioner."""
         super().__init__(**kwargs)
-        
+        self.kernel_id = kernel_id
+        self.kernel_spec = kernel_spec
+        self.kernel_manager: Optional[KernelManager] = self.parent
+
         # Initialize port range
         self.lower_port = 0
         self.upper_port = 0
@@ -110,7 +115,7 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
     def _enforce_authorization(self, **kwargs) -> None:
         """Enforce authorization before kernel launch."""
         # Extract username from launch kwargs
-        username = kwargs.get('env', {}).get('KERNEL_USERNAME', 'anonymous')
+        username = KernelSessionManager.get_kernel_username(**kwargs)
         
         # Check unauthorized users first
         if username in self.unauthorized_users:
@@ -205,13 +210,17 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         self._enforce_authorization(**kwargs)
         
         # Add Enterprise Gateway specific environment variables
-        env = kwargs.get('env', {})
+        env: Dict[str, str] = kwargs.get('env', {})
         env['KERNEL_ID'] = self.kernel_id
         
         # Add kernel language if available
-        if hasattr(self.kernel_spec, 'language'):
-            env.setdefault('KERNEL_LANGUAGE', self.kernel_spec.language.lower())
-            
+        env.setdefault(
+            'KERNEL_LANGUAGE',
+            self.kernel_spec.language.lower() 
+            if hasattr(self.kernel_spec, 'language') 
+            else "unknown-kernel-language"
+        )
+
         kwargs['env'] = env
         return kwargs
         
