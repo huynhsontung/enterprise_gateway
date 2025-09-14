@@ -175,7 +175,7 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
         if signum == 0:
             # Heartbeat check - poll for status
             await self.poll()
-        elif signum == 9:  # SIGKILL
+        elif signum == signal.SIGKILL:
             await self.kill()
         else:
             # This is very likely an interrupt signal, so defer to the super class

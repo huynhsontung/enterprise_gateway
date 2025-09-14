@@ -165,7 +165,7 @@ class ResponseManager(SingletonConfigurable):
     def __init__(self, **kwargs: dict[str, Any] | None):
         """Initialize the manager."""
         super().__init__(**kwargs)
-        self._response_ip = None
+        self._response_ip = ""
         self._response_port = None
         self._response_socket = None
         self._connection_processor = None
@@ -271,8 +271,12 @@ class ResponseManager(SingletonConfigurable):
 
     async def _process_connections(self) -> None:
         """Checks the socket for data, if found, decrypts the payload and posts to 'wait map'."""
+        if self._response_socket is None:
+            self.log.error(f"Failed to process connections: no response socket!")
+            return
+
         loop = asyncio.get_event_loop()
-        data = ""
+        data = bytes()
         try:
             conn, addr = await loop.sock_accept(self._response_socket)
             while True:
@@ -283,16 +287,14 @@ class ResponseManager(SingletonConfigurable):
                     self.log.debug(f"Decrypted payload '{payload}'")
                     self._post_connection(payload)
                     break
-                data = data + buffer.decode(
-                    encoding="utf-8"
-                )  # append what we received until we get no more...
+                data = data + buffer  # append what we received until we get no more...
             conn.close()
         except timeout:
             pass
         except Exception as ex:
             self.log.error(f"Failure occurred processing connection: {ex}")
 
-    def _decode_payload(self, data: json) -> dict:
+    def _decode_payload(self, data: bytes) -> dict:
         """
         Decodes the payload.
 

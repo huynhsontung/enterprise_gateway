@@ -10,10 +10,10 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Any, Dict, Optional, Union, override
+from typing import Any, Dict, override
 
 from jupyter_client.provisioning.local_provisioner import LocalProvisioner
-from jupyter_client import localinterfaces
+from jupyter_client import KernelConnectionInfo, localinterfaces
 
 from .base import EnterpriseProvisionerBase
 
@@ -63,7 +63,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
                 self.log_and_raise(http_status_code=500, reason=error_message)
         
     @override
-    async def launch_kernel(self, cmd: list[str], **kwargs) -> Dict[str, Union[int, str, bytes]]:
+    async def launch_kernel(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
         """
         Launch a local kernel process.
         
