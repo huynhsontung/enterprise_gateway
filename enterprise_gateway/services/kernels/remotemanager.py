@@ -469,10 +469,10 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
         """Initialize the remote kernel manager."""
         super().__init__(**kwargs)
         self.process_proxy = None
-        self.response_address = None
-        self.public_key = None
+        self.response_address = ""
+        self.public_key = ""
         self.sigint_value = None
-        self.kernel_id = None
+        self.kernel_id = ""
         self.user_overrides = {}
         self.kernel_launch_timeout = default_kernel_launch_timeout
         self.restarting = False  # need to track whether we're in a restart situation or not

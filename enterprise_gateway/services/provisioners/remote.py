@@ -52,6 +52,9 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # ResponseManager integration
         self.response_manager = ResponseManager.instance()
         self.response_manager.register_event(self.kernel_id)
+        if self.kernel_manager:
+            self.kernel_manager.response_address = self.response_manager.response_address
+            self.kernel_manager.public_key = self.response_manager.public_key
         
         # Set response address and public key for kernel launchers
         self.response_address = self.response_manager.response_address
@@ -61,9 +64,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.pid = 0
         self.pgid = 0
         # Note: self.ip is a traitlet defined in EnterpriseGatewayConfigMixin with default value
-        
-        # Initialize response management for remote communication
-        self._setup_response_management()
 
     @override
     async def pre_launch(self, **kwargs) -> Dict[str, Any]:
@@ -93,13 +93,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.log.debug(f"Added ResponseManager env vars - address: {self.response_address}")
         
         return kwargs
-        
-    def _setup_response_management(self) -> None:
-        """Setup response socket management for remote communication."""
-        # ResponseManager is already initialized in __init__
-        # This method is now used for any additional setup if needed
-        self.log.debug(f"Response management setup complete for kernel {self.kernel_id}")
-        self.log.debug(f"Response address: {self.response_address}")
         
     def _close_response_socket(self) -> None:
         """Close the response socket if it exists."""

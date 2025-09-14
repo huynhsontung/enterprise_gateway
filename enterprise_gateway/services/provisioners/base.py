@@ -6,18 +6,15 @@ including session persistence, authorization, and port management.
 
 from __future__ import annotations
 
-import asyncio
 import os
-import signal
-import socket
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
-from jupyter_client.manager import KernelManager
 from jupyter_client.kernelspec import KernelSpec
-from traitlets import Bool, Float, Int, Set, Unicode, default
+from traitlets import Float, Set, Unicode, default
 
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
+from enterprise_gateway.services.kernels.remotemanager import RemoteKernelManager
 from enterprise_gateway.services.sessions.kernelsessionmanager import KernelSessionManager
 
 env_pop_list = ["EG_REMOTE_PWD", "LS_COLORS"]
@@ -66,8 +63,8 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         super().__init__(**kwargs)
         self.kernel_id = kernel_id
         self.kernel_spec = kernel_spec
-        if hasattr(self, 'parent') and isinstance(self.parent, KernelManager):
-            self.kernel_manager: Optional[KernelManager] = self.parent
+        if hasattr(self, 'parent') and isinstance(self.parent, RemoteKernelManager):
+            self.kernel_manager: Optional[RemoteKernelManager] = self.parent
 
         # Initialize port range
         self.lower_port = 0
@@ -75,7 +72,7 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         self._validate_port_range()
         
         # Initialize authorization
-        self._setup_authorization()
+        self._setup_authorization(**kwargs)
         
         # Response management for remote communication
         self.response_address = None
@@ -83,7 +80,6 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         
         # Timeout and error handling
         self.start_time = None
-        self._setup_response_management()
         
     def _validate_port_range(self) -> None:
         """Validate and parse the port range configuration."""
@@ -102,16 +98,25 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
                 self.lower_port = 0
                 self.upper_port = 0
     
-    def _setup_authorization(self) -> None:
+    def _setup_authorization(self, **kwargs) -> None:
         """Setup authorization from kernel manager and proxy config."""
-        # This will be implemented to integrate with kernel manager authorization
-        pass
-        
-    def _setup_response_management(self) -> None:
-        """Setup response management for remote communication."""
-        # Initialize response management
-        # This will be enhanced when ResponseManager is available
-        pass
+        self.unauthorized_users = set()
+        self.authorized_users = set()
+        if self.kernel_manager:
+            self.unauthorized_users = self.kernel_manager.unauthorized_users
+            self.authorized_users = self.kernel_manager.authorized_users
+
+        # Take union of unauthorized users...
+        unauthorized_users_conf: str = kwargs.get("unauthorized_users", "")
+        if unauthorized_users_conf:
+            self.unauthorized_users = self.unauthorized_users.union(
+                unauthorized_users_conf.split(",")
+            )
+
+        # Let authorized users override global value - if set on kernelspec...
+        authorized_users_conf: str = kwargs.get("authorized_users", "")
+        if authorized_users_conf:
+            self.authorized_users = set(authorized_users_conf.split(","))
         
     def _enforce_authorization(self, **kwargs) -> None:
         """Enforce authorization before kernel launch."""
