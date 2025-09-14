@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import subprocess
 from typing import Any, Dict, override
 
 from jupyter_client.provisioning.local_provisioner import LocalProvisioner
 from jupyter_client import KernelConnectionInfo, localinterfaces
+from traitlets import List, Unicode
 
 from .base import EnterpriseProvisionerBase
 
@@ -29,16 +31,49 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
     - Port range management
     - Process group tracking
     """
+
+    # Trait for specifying local IPs that should not be included when determining the response address
+    prohibited_local_ips = List(
+        Unicode(),
+        help="""List of local IP patterns (regular expressions) that should not be included
+        when determining the response address. For example, on systems with many network interfaces,
+        some may have their IPs appear in the local interfaces list (e.g., docker's 172.17.0.* is an example)
+        that should not be used. (EG_PROHIBITED_LOCAL_IPS env var)"""
+    ).tag(config=True)
+
+    def _prohibited_local_ips_default(self):
+        """Default value for prohibited_local_ips from environment variable."""
+        prohibited_ips_str = os.getenv("EG_PROHIBITED_LOCAL_IPS", "")
+        if prohibited_ips_str:
+            return [ip.strip() for ip in prohibited_ips_str.split(",") if ip.strip()]
+        return []
     
     def __init__(self, **kwargs):
         """Initialize the local Enterprise Gateway provisioner.""" 
         super().__init__(**kwargs)
         
         # Set IP to localhost for local kernels
-        self.ip = localinterfaces.LOCALHOST
+        self.ip = self._get_local_ip()
         
         # Local process tracking
         self.pgid = 0
+
+    def _get_local_ip(self) -> str:
+        """
+        Honor the prohibited IPs, locating the first not in the list.
+            
+        Returns:
+            First public IP not matching any prohibited pattern
+        """
+        for ip in localinterfaces.public_ips():
+            is_prohibited = False
+            for prohibited_ip in self.prohibited_local_ips:  # exhaust prohibited list, applying regexs
+                if prohibited_ip and re.match(prohibited_ip, ip):
+                    is_prohibited = True
+                    break
+            if not is_prohibited:
+                return ip
+        return localinterfaces.public_ips()[0]  # all were prohibited, so go with the first
         
     @override
     def detect_launch_failure(self) -> None:
