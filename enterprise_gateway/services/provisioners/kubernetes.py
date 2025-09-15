@@ -17,6 +17,7 @@ import kubernetes
 import urllib3
 from kubernetes import client, config
 from jupyter_client import KernelConnectionInfo
+from traitlets import Bool, Unicode, default
 
 from .container import ContainerEnterpriseProvisioner
 from ..sessions.kernelsessionmanager import KernelSessionManager
@@ -26,15 +27,6 @@ urllib3.disable_warnings()
 
 # Default logging level of kubernetes produces too much noise - raise to warning only.
 logging.getLogger("kubernetes").setLevel(os.environ.get("EG_KUBERNETES_LOG_LEVEL", logging.WARNING))
-
-# Environment configuration
-enterprise_gateway_namespace = os.environ.get("EG_NAMESPACE", "default")
-default_kernel_service_account_name = os.environ.get(
-    "EG_DEFAULT_KERNEL_SERVICE_ACCOUNT_NAME", "default"
-)
-kernel_cluster_role = os.environ.get("EG_KERNEL_CLUSTER_ROLE", "cluster-admin")
-share_gateway_namespace = bool(os.environ.get("EG_SHARED_NAMESPACE", "False").lower() == "true")
-kpt_dir = os.environ.get("EG_POD_TEMPLATE_DIR", "/tmp")
 
 # Load Kubernetes configuration
 try:
@@ -66,6 +58,52 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
     
     # Identifies the kind of object being managed by this provisioner
     object_kind = "Pod"
+    
+    # Kubernetes configuration traitlets
+    enterprise_gateway_namespace = Unicode(
+        config=True,
+        help="""Namespace where Enterprise Gateway is running (EG_NAMESPACE env var)."""
+    )
+    
+    @default("enterprise_gateway_namespace")
+    def _enterprise_gateway_namespace_default(self):
+        return os.environ.get("EG_NAMESPACE", "default")
+    
+    default_kernel_service_account_name = Unicode(
+        config=True,
+        help="""Default service account name for kernel pods (EG_DEFAULT_KERNEL_SERVICE_ACCOUNT_NAME env var)."""
+    )
+    
+    @default("default_kernel_service_account_name")
+    def _default_kernel_service_account_name_default(self):
+        return os.environ.get("EG_DEFAULT_KERNEL_SERVICE_ACCOUNT_NAME", "default")
+    
+    kernel_cluster_role = Unicode(
+        config=True,
+        help="""Cluster role to bind to kernel service accounts (EG_KERNEL_CLUSTER_ROLE env var)."""
+    )
+    
+    @default("kernel_cluster_role")
+    def _kernel_cluster_role_default(self):
+        return os.environ.get("EG_KERNEL_CLUSTER_ROLE", "cluster-admin")
+    
+    share_gateway_namespace = Bool(
+        config=True,
+        help="""Whether to share the Enterprise Gateway namespace with kernels (EG_SHARED_NAMESPACE env var)."""
+    )
+    
+    @default("share_gateway_namespace")
+    def _share_gateway_namespace_default(self):
+        return os.environ.get("EG_SHARED_NAMESPACE", "False").lower() == "true"
+    
+    pod_template_dir = Unicode(
+        config=True,
+        help="""Directory for storing pod template files (EG_POD_TEMPLATE_DIR env var)."""
+    )
+    
+    @default("pod_template_dir")
+    def _pod_template_dir_default(self):
+        return os.environ.get("EG_POD_TEMPLATE_DIR", "/tmp")
     
     def __init__(self, **kwargs):
         """Initialize the Kubernetes Enterprise Gateway provisioner."""
@@ -502,9 +540,9 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         namespace = env.get("KERNEL_NAMESPACE")
         
         if namespace is None:
-            if share_gateway_namespace:
+            if self.share_gateway_namespace:
                 # Use the same namespace as Enterprise Gateway
-                namespace = enterprise_gateway_namespace
+                namespace = self.enterprise_gateway_namespace
                 self.log.info(f"Using shared namespace: {namespace}")
             else:
                 # Create a dedicated namespace for this kernel
@@ -518,8 +556,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         
         return namespace
     
-    @staticmethod
-    def _determine_kernel_service_account_name(**kwargs: Any) -> str:
+    def _determine_kernel_service_account_name(self, **kwargs: Any) -> str:
         """
         Determine the service account name for the kernel.
         
@@ -527,7 +564,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
             Service account name
         """
         env = kwargs.get("env", {})
-        return env.get("KERNEL_SERVICE_ACCOUNT_NAME", default_kernel_service_account_name)
+        return env.get("KERNEL_SERVICE_ACCOUNT_NAME", self.default_kernel_service_account_name)
     
     def _create_kernel_namespace(self, service_account_name: str) -> str:
         """
@@ -599,7 +636,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
             namespace: Namespace to create role binding in
             service_account_name: Service account to bind
         """
-        role_binding_name = kernel_cluster_role
+        role_binding_name = self.kernel_cluster_role
         
         # Prepare role binding metadata
         labels = {
@@ -613,7 +650,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         binding_role_ref = client.V1RoleRef(
             api_group="rbac.authorization.k8s.io",
             kind="ClusterRole",
-            name=kernel_cluster_role
+            name=self.kernel_cluster_role
         )
         
         # Create subject reference (simplified approach)
@@ -668,7 +705,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         if not self.kernel_id:
             return
         
-        kpt_file = os.path.join(kpt_dir, f"kpt_{self.kernel_id}")
+        kpt_file = os.path.join(self.pod_template_dir, f"kpt_{self.kernel_id}")
         try:
             os.remove(kpt_file)
             self.log.debug(f"Removed pod template file: {kpt_file}")
