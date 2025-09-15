@@ -82,7 +82,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         
         Checks the local process for failure conditions.
         """
-        if hasattr(self, 'process') and self.process:
+        if self.process:
             poll_result = self.process.poll()
             if poll_result and poll_result > 0:
                 # Process exited with error code
@@ -157,7 +157,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         })
         
         # Add process information if available
-        if hasattr(self, 'process') and self.process:
+        if self.process:
             info.update({
                 'pid': self.process.pid,
                 'pgid': self.pgid,
@@ -239,7 +239,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         """
         self.log.debug(f"Sending signal {signum} to local kernel")
         
-        if hasattr(self, 'process') and self.process:
+        if self.process:
             try:
                 # Try to send signal to the process
                 self.process.send_signal(signum)
@@ -265,6 +265,6 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         Returns:
             True if managing a process, False otherwise
         """
-        if hasattr(self, 'process') and self.process:
+        if self.process:
             return self.process.poll() is None
         return False

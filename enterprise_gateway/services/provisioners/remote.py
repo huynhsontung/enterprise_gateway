@@ -41,13 +41,12 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         super().__init__(**kwargs)
         
         # Remote-specific attributes
-        self.assigned_ip = None
+        self.assigned_ip = ""
         self.assigned_host = ""
-        self.comm_ip = None
+        self.comm_ip = ""
         self.comm_port = 0
         self.tunneled_connect_info = None
         self.tunnel_processes = {}
-        self.response_socket = None
         
         # ResponseManager integration
         self.response_manager = ResponseManager.instance()
@@ -93,18 +92,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         self.log.debug(f"Added ResponseManager env vars - address: {self.response_address}")
         
         return kwargs
-        
-    def _close_response_socket(self) -> None:
-        """Close the response socket if it exists."""
-        if self.response_socket:
-            try:
-                self.log.debug("Response socket still open, closing it")
-                self.response_socket.shutdown(SHUT_RDWR)
-                self.response_socket.close()
-            except OSError:
-                # Tolerate exceptions since we don't need this socket and want to continue
-                pass
-            self.response_socket = None
             
     def _extract_pid_info(self, connection_info: KernelConnectionInfo) -> None:
         """
@@ -297,9 +284,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                 "connection information is null!"
             )
             self.log_and_raise(http_status_code=500, reason=error_message)
-            
-        # Close response socket as it's no longer needed
-        self._close_response_socket()
         
     async def receive_connection_info(self) -> bool:
         """
@@ -326,17 +310,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             self.log_and_raise(http_status_code=500, reason=error_message)
 
         return False
-        
-    def detect_launch_failure(self) -> None:
-        """
-        Detect if remote kernel launch has failed.
-        """
-        # TODO: Implement remote launch failure detection
-        # This might check for:
-        # - Process exit codes
-        # - Connection timeouts  
-        # - Response socket errors
-        self.log.warning("Remote launch failure detection not yet implemented")
         
     async def _send_listener_request(self, request: Dict[str, Any], shutdown_socket: bool = False) -> None:
         """
@@ -407,16 +380,16 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         await super().load_provisioner_info(provisioner_info)
         
         # Restore remote-specific state
-        self.assigned_ip = provisioner_info.get('assigned_ip')
-        self.assigned_host = provisioner_info.get('assigned_host', '')
-        self.comm_ip = provisioner_info.get('comm_ip')
-        self.comm_port = provisioner_info.get('comm_port', 0)
+        self.assigned_ip = str(provisioner_info.get('assigned_ip', ''))
+        self.assigned_host = str(provisioner_info.get('assigned_host', ''))
+        self.comm_ip = str(provisioner_info.get('comm_ip', ''))
+        self.comm_port = int(provisioner_info.get('comm_port', 0))
         self.tunneled_connect_info = provisioner_info.get('tunneled_connect_info')
-        self.pid = provisioner_info.get('pid', 0)
-        self.pgid = provisioner_info.get('pgid', 0)
-        self.ip = provisioner_info.get('ip')
-        
-        # Re-establish tunneling if it was in use
+        self.pid = int(provisioner_info.get('pid', 0))
+        self.pgid = int(provisioner_info.get('pgid', 0))
+        self.ip = str(provisioner_info.get('ip', ''))
+
+        # TODO: Re-establish tunneling if it was in use
         if self.tunneled_connect_info:
             self.log.debug("Re-establishing SSH tunneling from session persistence")
             # This would re-establish tunnels
@@ -434,13 +407,10 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Cleanup tunnels
         await self._cleanup_tunnels()
         
-        # Close response socket
-        self._close_response_socket()
-        
         # Reset remote state
-        self.assigned_ip = None
+        self.assigned_ip = ""
         self.assigned_host = ""
-        self.comm_ip = None
+        self.comm_ip = ""
         self.comm_port = 0
         self.tunneled_connect_info = None
         
@@ -493,32 +463,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         await super().send_signal(signum)
         
     @override
-    async def poll(self) -> Optional[int]:
-        """
-        Poll remote kernel process for termination status.
-        
-        Returns:
-            None if process is still running, exit code if terminated
-        """
-        # This will be implemented by subclasses to handle
-        # environment-specific process polling
-        self.log.debug("Remote process polling - placeholder implementation")
-        return None
-        
-    @override
-    async def wait(self) -> Optional[int]:
-        """
-        Wait for remote kernel process to terminate.
-        
-        Returns:
-            Exit code when process terminates
-        """
-        # This will be implemented by subclasses to handle
-        # environment-specific process waiting
-        self.log.debug("Remote process waiting - placeholder implementation")
-        return 0
-        
-    @override
     async def terminate(self, restart: bool = False) -> None:
         """
         Terminate remote kernel process.
@@ -554,11 +498,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             await self.send_signal(kill_signal)
         except Exception as e:
             self.log.debug(f"Error sending kill signal: {e}")
-
-    @override
-    def log_and_raise(self, http_status_code: Optional[int] = None, reason: Optional[str] = None) -> None:
-        self._close_response_socket()
-        super().log_and_raise(http_status_code, reason)
         
     @property
     @override
@@ -570,4 +509,4 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             True if managing a process, False otherwise
         """
         # This should be implemented based on remote process state
-        return self.assigned_ip is not None
+        return bool(self.assigned_ip)

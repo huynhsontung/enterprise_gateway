@@ -267,6 +267,9 @@ class ResponseManager(SingletonConfigurable):
             self._connection_processor = None
 
         if self._response_socket is not None:
+            self.log.debug("Response socket still open, closing it")
+            self._response_socket.shutdown(SHUT_RDWR)
+            self._response_socket.close()
             self._response_socket = None
 
     async def _process_connections(self) -> None:

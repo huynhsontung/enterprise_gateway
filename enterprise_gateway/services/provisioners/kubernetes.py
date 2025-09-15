@@ -274,7 +274,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         # Poll until the pod is no longer in a running state
         while True:
             exit_code = await self.poll()
-            if exit_code is not None:
+            if exit_code:
                 self.log.info(
                     f"Kubernetes pod terminated with exit code: {exit_code}. "
                     f"Pod: {self.kernel_pod_name}, KernelID: {self.kernel_id}"
