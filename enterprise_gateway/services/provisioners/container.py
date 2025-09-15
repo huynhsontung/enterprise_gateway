@@ -225,8 +225,6 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
                         # We won't send process signals for container lifecycle management
                         self.pid = 0
                         self.pgid = 0
-            else:
-                self.detect_launch_failure()
                 
         return ready_to_connect
 

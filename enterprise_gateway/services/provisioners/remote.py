@@ -153,28 +153,11 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Launch the remote process (implemented by subclasses)
         connection_info = await self._launch_remote_process(cmd, **kwargs)
         
-        # Wait for connection info from ResponseManager if this is a remote launch
-        # The kernel launcher will send connection details back via ResponseManager
-        if not connection_info:
-            self.log.debug("No immediate connection info, waiting for ResponseManager...")
-            success = await self.receive_connection_info()
-            if not success:
-                self.detect_launch_failure()
-                raise RuntimeError("Failed to receive connection info from remote kernel launcher")
-            # After receive_connection_info, connection_info is stored in self.connection_info
-            connection_info = getattr(self, 'connection_info', {})
-        
-        # Extract process information from connection info
-        self._extract_pid_info(connection_info)
-        
         # Confirm remote startup
         startup_confirmed = await self.confirm_remote_startup()
         if not startup_confirmed:
             self.detect_launch_failure()
             raise RuntimeError("Failed to confirm remote kernel startup")
-            
-        # Setup connection info and tunneling if needed
-        await self._setup_connection_info(connection_info)
         
         self.log.info(
             f"Remote kernel launched successfully. "
@@ -207,11 +190,9 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         Args:
             connection_info: Connection information from remote launch
         """
-        # Extract host/IP information
-        if 'assigned_host' in connection_info:
-            self.assigned_host = str(connection_info['assigned_host'])
-        if 'assigned_ip' in connection_info:
-            self.assigned_ip = str(connection_info['assigned_ip'])
+        self.log.debug(
+            f"Host assigned to the kernel is: '{self.assigned_host}' '{self.assigned_ip}'"
+        )
             
         # Set IP in connection info
         if self.assigned_ip:
@@ -224,7 +205,17 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             
         # Setup communication port if available
         if 'comm_port' in connection_info:
+            self.comm_ip = connection_info["ip"]
             self.comm_port = int(connection_info['comm_port'])
+            self.log.debug(
+                f"Established gateway communication to: {self.assigned_ip}:{self.comm_port} for KernelID '{self.kernel_id}'"
+            )
+        else:
+            self.log.debug(
+                f"Gateway communication port has NOT been established for KernelID '{self.kernel_id}' (optional)."
+            )
+
+        self._update_connection(connection_info)
 
     async def _setup_ssh_tunneling(self, connection_info: KernelConnectionInfo) -> None:
         """
@@ -249,33 +240,19 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         Args:
             connection_info: Connection information to update
         """
+        if not self.kernel_manager:
+            self.log.warning("Kernel manager not available to update connection info")
+            return
+        
+        # Reset the ports to 0 so load can take place (which resets the members to value from file or json)...
+        self.kernel_manager.stdin_port = self.kernel_manager.iopub_port = (
+            self.kernel_manager.shell_port
+        ) = self.kernel_manager.hb_port = self.kernel_manager.control_port = 0
+
         if connection_info:
-            # Extract communication port if present
-            if 'comm_port' in connection_info:
-                self.comm_port = int(connection_info['comm_port'])
-                self.log.debug(f"Updated comm_port: {self.comm_port}")
-            
-            # Extract assigned host/IP if present  
-            if 'assigned_host' in connection_info:
-                self.assigned_host = str(connection_info['assigned_host'])
-                self.log.debug(f"Updated assigned_host: {self.assigned_host}")
-                
-            if 'assigned_ip' in connection_info:
-                self.assigned_ip = str(connection_info['assigned_ip'])
-                self.log.debug(f"Updated assigned_ip: {self.assigned_ip}")
-                
-            # Set comm_ip to assigned_ip if not already set
-            if self.assigned_ip and not self.comm_ip:
-                self.comm_ip = self.assigned_ip
-            
             # Extract process information
-            self._extract_pid_info(connection_info)
-            
-            # Store the connection info for the provisioner
-            self.connection_info = connection_info
-            
-            # Update kernel manager with connection info
-            # TODO: Integrate with kernel manager's load_connection_info
+            self._extract_pid_info(connection_info=connection_info)
+            self.kernel_manager.load_connection_info(info=connection_info)
             self.log.debug(
                 f"Received connection info for KernelID '{self.kernel_id}' "
                 f"from host '{self.assigned_host}': {connection_info}..."
@@ -288,6 +265,8 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                 "connection information is null!"
             )
             self.log_and_raise(http_status_code=500, reason=error_message)
+
+        self.kernel_manager._connection_file_written = True  # allows for cleanup of local files (as necessary)
         
     async def receive_connection_info(self) -> bool:
         """
@@ -300,7 +279,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             self.log.debug(f"Waiting for connection info for kernel {self.kernel_id}")
             connect_info = await self.response_manager.get_connection_info(self.kernel_id)
             self.log.debug(f"Received connection info: {connect_info}")
-            self._update_connection(connect_info)
+            await self._setup_connection_info(connect_info)
             return True
         except (asyncio.TimeoutError, TimeoutError):
             self.log.warning(f"Timeout waiting for KernelID '{self.kernel_id}' to send "
