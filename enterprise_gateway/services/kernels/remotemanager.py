@@ -649,14 +649,13 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
 
         # If we're using a remote proxy, we need to send the launcher indication that we're
         # shutting down so it can exit its listener thread, if its using one.
-        if isinstance(self.process_proxy, RemoteProcessProxy):
-            if hasattr(self.process_proxy, 'shutdown_listener'):
-                try:
-                    shutdown_method = getattr(self.process_proxy, 'shutdown_listener')
-                    if callable(shutdown_method):
-                        shutdown_method()
-                except Exception as e:
-                    self.log.debug(f"Error calling shutdown_listener: {e}")
+        if hasattr(self.process_proxy, 'shutdown_listener'):
+            try:
+                shutdown_method = getattr(self.process_proxy, 'shutdown_listener')
+                if callable(shutdown_method):
+                    shutdown_method()
+            except Exception as e:
+                self.log.debug(f"Error calling shutdown_listener: {e}")
 
     async def restart_kernel(self, now: bool = False, **kwargs: dict[str, Any] | None) -> None:
         """

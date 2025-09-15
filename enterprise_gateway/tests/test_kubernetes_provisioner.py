@@ -102,7 +102,7 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         
         for input_name, expected in test_cases:
             with self.subTest(input_name=input_name):
-                result = self.provisioner._get_pod_name(input_name)
+                result = KubernetesEnterpriseProvisioner._get_pod_name(input_name)
                 self.assertEqual(result, expected)
 
     def test_safe_template_substitution(self):

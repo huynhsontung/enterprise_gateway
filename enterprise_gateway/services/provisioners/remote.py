@@ -7,9 +7,11 @@ replacing RemoteProcessProxy and its subclasses.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import signal
 import socket
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, override
 from socket import SHUT_RDWR
@@ -17,8 +19,10 @@ from socket import SHUT_RDWR
 from jupyter_client import KernelConnectionInfo
 
 from .base import EnterpriseProvisionerBase
-from ..processproxies.processproxy import ResponseManager
+from ..processproxies.processproxy import KernelChannel, ResponseManager
 
+
+socket_timeout = float(os.getenv("EG_SOCKET_TIMEOUT", "0.005"))
 
 class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
     """
@@ -311,38 +315,81 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
 
         return False
         
-    async def _send_listener_request(self, request: Dict[str, Any], shutdown_socket: bool = False) -> None:
+    def _send_listener_request(self, request: Dict[str, Any], shutdown_socket: bool = False) -> None:
         """
-        Send request to kernel launcher listener.
+        Send request to kernel launcher listener. Caller is responsible for handling any exceptions.
         
         Args:
             request: Request to send
             shutdown_socket: Whether to shutdown socket after sending
         """
         if self.comm_port > 0 and self.comm_ip:
+            self.log.debug(f"Sending request to {self.comm_ip}:{self.comm_port}: {request}")
+            
+            # Create socket and send request
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                self.log.debug(f"Sending request to {self.comm_ip}:{self.comm_port}: {request}")
+                sock.settimeout(socket_timeout)
+                sock.connect((self.comm_ip, self.comm_port))
                 
-                # Create socket and send request
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                try:
-                    sock.connect((self.comm_ip, self.comm_port))
-                    
-                    # Send the request (simplified implementation)
-                    import json
-                    message = json.dumps(request).encode()
-                    sock.sendall(message)
-                    
-                    if shutdown_socket:
+                # Send the request (simplified implementation)
+                message = json.dumps(request).encode()
+                sock.sendall(message)
+            finally:
+                if shutdown_socket:
+                    try:
                         sock.shutdown(SHUT_RDWR)
-                        
-                finally:
-                    sock.close()
-                    
-            except Exception as e:
-                self.log.warning(f"Exception sending request to listener: {e}")
+                    except Exception as e:
+                        if isinstance(e, OSError) and e.errno == errno.ENOTCONN:
+                            # Listener is not connected.  This is probably a follow-on to ECONNREFUSED on connect
+                            self.log.debug(
+                                f"OSError(ENOTCONN) raised on socket shutdown, listener "
+                                f"has likely already exited. Cannot send '{request}'"
+                            )
+                        else:
+                            self.log.warning(
+                                f"Exception occurred attempting to shutdown communication "
+                                f"socket to {self.comm_ip}:{self.comm_port} "
+                                f"for KernelID '{self.kernel_id}' (ignored): {e!s}"
+                            )
+                sock.close()
         else:
             self.log.debug(f"Invalid comm port, not sending request '{request}'")
+
+    def shutdown_listener(self):
+        """
+        Sends a shutdown request to the kernel launcher listener.
+        """
+        # If a comm port has been established, instruct the listener to shutdown so that proper
+        # kernel termination can occur.  If not done, the listener keeps the launcher process
+        # active, even after the kernel has terminated, leading to less than graceful terminations.
+
+        if self.comm_port > 0:
+            shutdown_request = {}
+            shutdown_request["shutdown"] = 1
+
+            try:
+                self._send_listener_request(shutdown_request, shutdown_socket=True)
+                self.log.debug("Shutdown request sent to listener via gateway communication port.")
+            except Exception as e:
+                if not isinstance(e, OSError) or e.errno != errno.ECONNREFUSED:
+                    self.log.warning(
+                        "An unexpected exception occurred sending listener shutdown to {}:{} for "
+                        "KernelID '{}': {}".format(
+                            self.comm_ip, self.comm_port, self.kernel_id, str(e)
+                        )
+                    )
+
+            # Also terminate the tunnel process for the communication port - if in play.  Failure to terminate
+            # this process results in the kernel (launcher) appearing to remain alive following the shutdown
+            # request, which triggers the "forced kill" termination logic.
+
+            comm_port_name = KernelChannel.COMMUNICATION.value
+            comm_port_tunnel = self.tunnel_processes.get(comm_port_name, None)
+            if comm_port_tunnel:
+                self.log.debug(f"shutdown_listener: terminating {comm_port_name} tunnel process.")
+                comm_port_tunnel.terminate()
+                del self.tunnel_processes[comm_port_name]
         
     @override
     async def get_provisioner_info(self) -> Dict[str, Any]:
@@ -450,7 +497,7 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
                     'signal': signum,
                     'kernel_id': self.kernel_id
                 }
-                await self._send_listener_request(request)
+                self._send_listener_request(request)
                 return
             except Exception as e:
                 if isinstance(e, ConnectionRefusedError):

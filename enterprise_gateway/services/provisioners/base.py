@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import time
+import socket
 from typing import Any, Dict, Optional
 
 from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
@@ -127,7 +128,6 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         Returns:
             List of available port numbers
         """
-        import socket
         
         ports = []
         if self.lower_port > 0 and self.upper_port > 0:
@@ -165,7 +165,7 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
         """
         info = await super().get_provisioner_info()
         info.update({
-            'enterprise_gateway_version': '3.0.0',  # Will be dynamic
+            # 'enterprise_gateway_version': '3.0.0',  # TODO: Will be dynamic
             'provisioner_type': self.__class__.__name__,
             'kernel_id': self.kernel_id,
             'authorized_users': list(self.authorized_users),

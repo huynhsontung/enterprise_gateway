@@ -756,8 +756,9 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         except Exception as e:
             self.log.warning(f"Template substitution error: {e}")
             return None
-    
-    def _get_pod_name(self, name: str) -> str:
+
+    @staticmethod
+    def _get_pod_name(name: str) -> str:
         """
         Make a name valid for Kubernetes pod.
         
@@ -777,6 +778,7 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         
         return pod_name
 
+    @override
     async def _terminate_container_resources(self) -> None:
         """Terminate any artifacts created on behalf of the container's lifetime."""
         try:
