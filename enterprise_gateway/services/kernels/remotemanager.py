@@ -12,7 +12,7 @@ import signal
 import time
 import typing
 import uuid
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 from jupyter_client.ioloop.manager import AsyncIOLoopKernelManager
 from jupyter_client.kernelspec import KernelSpec
@@ -26,6 +26,7 @@ from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
 
 from ..processproxies.processproxy import BaseProcessProxyABC, LocalProcessProxy, RemoteProcessProxy
 from jupyter_client.provisioning.factory import KernelProvisionerFactory
+from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
 from ..sessions.kernelsessionmanager import KernelSessionManager
 
 default_kernel_launch_timeout = float(os.getenv("EG_KERNEL_LAUNCH_TIMEOUT", "30"))
@@ -377,9 +378,9 @@ class RemoteMappingKernelManager(AsyncMappingKernelManager):
         terminated and a new instance - with access to the persisted kernel sessions is starting up.
         It attempts to "revive" the persisted kernel session by instantiating the necessary class instances
         to re-establish communication with the currently active kernel.
-        Note that this method is typically only successful when kernel instances are remote from the
-        previously running Enterprise Gateway server - since the need to re-establish communications
-        won't work if the kernels were also local to the (probably) terminated server.
+        
+        Now supports both the new kernel provisioner architecture and legacy process proxies.
+        
         Parameters
         ----------
         kernel_id : str
@@ -389,15 +390,15 @@ class RemoteMappingKernelManager(AsyncMappingKernelManager):
         connection_info : dict
             The connection information for the kernel loaded from persistent storage
         process_info : dict
-            The process information corresponding to the process-proxy used by the kernel and loaded
-            from persistent storage
+            The process information corresponding to the process-proxy/provisioner used by the kernel
+            and loaded from persistent storage
         launch_args : dict
             The arguments used for the initial launch of the kernel
         Returns
         -------
             True if kernel could be located and started, False otherwise.
         """
-        # Create a KernelManger instance and load connection and process info, then confirm the kernel is still
+        # Create a KernelManager instance and load connection and process info, then confirm the kernel is still
         # alive.
         constructor_kwargs = {}
         if self.kernel_spec_manager:
@@ -414,25 +415,27 @@ class RemoteMappingKernelManager(AsyncMappingKernelManager):
 
         # Load connection info into member vars - no need to write out connection file
         km.load_connection_info(connection_info)
-
         km._launch_args = launch_args
 
-        # Construct a process-proxy
-        process_proxy = get_process_proxy_config(km.kernel_spec)
-        class_name = process_proxy.get("class_name")
-        if class_name:
-            process_proxy_class = import_item(class_name)
-            km.process_proxy = process_proxy_class(km, proxy_config=process_proxy.get("config"))
-            km.process_proxy.load_process_info(process_info)
+        # Try to create provisioner first (modern approach), fall back to process proxy (legacy)
+        if self._try_create_provisioner_from_session(km, kernel_id, process_info):
+            # Successfully created provisioner
+            self.log.debug(f"Created provisioner from session for kernel {kernel_id}")
+        elif self._try_create_process_proxy_from_session(km, process_info):
+            # Successfully created process proxy (legacy)
+            self.log.debug(f"Created process proxy from session for kernel {kernel_id}")
         else:
-            self.log.error("No process proxy class name found in kernel spec")
+            # Failed to create either provisioner or process proxy
+            self.log.error(f"Failed to create provisioner or process proxy for kernel {kernel_id}")
             return False
 
-        # Confirm we can even poll the process.  If not, remove the persisted session.
-        if km.process_proxy.poll() is False:
+        # Confirm we can still communicate with the kernel process
+        if not self._verify_kernel_alive(km):
+            self.log.warning(f"Kernel {kernel_id} is no longer alive, cannot restore session")
             return False
 
-        km.kernel = km.process_proxy
+        # Set up kernel manager in the mapping
+        km.kernel = km.process_proxy or km.provisioner
         km.start_restarter()
         km._connect_control_socket()
         self._kernels[kernel_id] = km
@@ -443,11 +446,127 @@ class RemoteMappingKernelManager(AsyncMappingKernelManager):
             lambda: self._handle_kernel_died(kernel_id),
             "dead",
         )
-        # Only initialize culling if available.  Warning message will be issued in gatewayapp at startup.
+
+        # Only initialize culling if available. Warning message will be issued in gatewayapp at startup.
         func = getattr(self, "initialize_culler", None)
         if func:
             func()
+
         return True
+
+    def _try_create_provisioner_from_session(
+        self, km: RemoteKernelManager, kernel_id: str, process_info: dict[str, Any]
+    ) -> bool:
+        """
+        Try to create a kernel provisioner from session data.
+        
+        Returns True if provisioner was successfully created, False otherwise.
+        """
+        try:            
+            # Get the singleton factory instance and create provisioner
+            factory = KernelProvisionerFactory.instance()
+            km.provisioner = factory.create_provisioner_instance(
+                kernel_id=kernel_id,
+                kernel_spec=km.kernel_spec,
+                parent=km
+            )
+            
+            # Load provisioner state from session
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context, schedule the coroutine
+                asyncio.create_task(km.provisioner.load_provisioner_info(process_info))
+            else:
+                # We're not in an async context, run it
+                loop.run_until_complete(km.provisioner.load_provisioner_info(process_info))
+
+            # For backward compatibility, also set process_proxy
+            km.process_proxy = km.provisioner
+            
+            self.log.info(f"Successfully created provisioner from session: {type(km.provisioner).__name__}")
+            return True
+            
+        except Exception as e:
+            self.log.debug(f"Failed to create provisioner from session: {e}")
+            return False
+
+    def _try_create_process_proxy_from_session(
+        self, km: RemoteKernelManager, process_info: dict[str, Any]
+    ) -> bool:
+        """
+        Try to create a process proxy from session data (legacy method).
+        
+        Returns True if process proxy was successfully created, False otherwise.
+        """
+        try:
+            # Get process proxy configuration from kernel spec
+            if not km.kernel_spec:
+                self.log.debug("No kernel spec available for process proxy creation")
+                return False
+                
+            process_proxy_cfg = get_process_proxy_config(km.kernel_spec)
+            class_name = process_proxy_cfg.get("class_name")
+            
+            if not class_name:
+                self.log.debug("No process proxy class name found in kernel spec")
+                return False
+            
+            # Create the process proxy instance
+            process_proxy_class = import_item(class_name)
+            km.process_proxy = process_proxy_class(km, proxy_config=process_proxy_cfg.get("config"))
+            
+            # Load process information from session
+            km.process_proxy.load_process_info(process_info)
+            
+            self.log.info(f"Successfully created process proxy from session: {class_name}")
+            return True
+            
+        except Exception as e:
+            self.log.debug(f"Failed to create process proxy from session: {e}")
+            return False
+
+    def _verify_kernel_alive(self, km: RemoteKernelManager) -> bool:
+        """
+        Verify that the kernel process is still alive.
+        
+        Returns True if kernel is alive, False otherwise.
+        """
+        try:
+            # For provisioners, we need to check if they support polling
+            if hasattr(km, 'provisioner') and km.provisioner:
+                if hasattr(km.provisioner, 'poll') and callable(km.provisioner.poll):
+                    # Provisioner supports polling
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # We're in an async context, this might be tricky
+                        # For now, assume alive if we can't poll synchronously
+                        self.log.debug("Cannot poll provisioner synchronously in async context")
+                        return True
+                    else:
+                        # Poll the provisioner
+                        result = loop.run_until_complete(km.provisioner.poll())
+                        return result is None  # None means still running
+                else:
+                    # Provisioner doesn't support polling, assume alive
+                    self.log.debug("Provisioner doesn't support polling, assuming alive")
+                    return True
+            
+            # For process proxies, use the traditional poll method
+            elif hasattr(km, 'process_proxy') and km.process_proxy:
+                if hasattr(km.process_proxy, 'poll') and callable(km.process_proxy.poll):
+                    result = km.process_proxy.poll()
+                    return result is False  # False means still running for process proxies
+                else:
+                    self.log.debug("Process proxy doesn't support polling, assuming alive")
+                    return True
+            
+            # No provisioner or process proxy found
+            self.log.warning("No provisioner or process proxy found to verify kernel status")
+            return False
+            
+        except Exception as e:
+            self.log.warning(f"Error verifying kernel alive status: {e}")
+            return False
 
     def new_kernel_id(self, **kwargs: dict[str, Any] | None) -> str:
         """
@@ -468,6 +587,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
     def __init__(self, **kwargs: dict[str, Any] | None):
         """Initialize the remote kernel manager."""
         super().__init__(**kwargs)
+        self.provisioner: Optional[KernelProvisionerBase] = None
         self.process_proxy = None
         self.response_address = ""
         self.public_key = ""
@@ -622,7 +742,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             f"Launching kernel: '{display_name}' with command: {kernel_cmd}"
         )
 
-        if hasattr(self, 'provisioner') and self.provisioner is not None:
+        if self.provisioner is not None:
             # Use the new provisioner system
             self.log.debug("Launching kernel using provisioner")
             connection_info = await self.provisioner.launch_kernel(kernel_cmd, **kwargs)
@@ -747,11 +867,23 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
                                 )
                 if hasattr(self, 'kernel') and getattr(self, 'kernel', None):
                     getattr(self, 'kernel').send_signal(self.sigint_value)
+                elif self.provisioner:
+                    # Handle provisioner signal sending
+                    if hasattr(self.provisioner, 'send_signal') and callable(self.provisioner.send_signal):
+                        await self.provisioner.send_signal(self.sigint_value)
+                    else:
+                        self.log.warning("Provisioner does not support send_signal")
                 elif self.process_proxy:
                     await self.process_proxy.send_signal(self.sigint_value)
             else:
                 if hasattr(self, 'kernel') and getattr(self, 'kernel', None):
                     getattr(self, 'kernel').send_signal(signum)
+                elif self.provisioner:
+                    # Handle provisioner signal sending
+                    if hasattr(self.provisioner, 'send_signal') and callable(self.provisioner.send_signal):
+                        await self.provisioner.send_signal(signum)
+                    else:
+                        self.log.warning("Provisioner does not support send_signal")
                 elif self.process_proxy:
                     await self.process_proxy.send_signal(signum)
         else:
@@ -766,13 +898,35 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
         # Note This method has been deprecated in jupyter_client 6.1.5 and
         # remains here for pre-6.2.0 jupyter_client installations.
 
+        # Clean up both provisioner and process_proxy for compatibility
         # Note we must use `process_proxy` here rather than `kernel`, although they're the same value.
         # The reason is because if the kernel shutdown sequence has triggered its "forced kill" logic
         # then that method (jupyter_client/manager.py/_kill_kernel()) will set `self.kernel` to None,
         # which then prevents process proxy cleanup.
-        if self.process_proxy:
-            self.process_proxy.cleanup()
-            self.process_proxy = None
+        
+        # Clean up provisioner if it exists
+        if self.provisioner:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule cleanup as a task
+                    asyncio.create_task(self.provisioner.cleanup())
+                else:
+                    # Run cleanup
+                    loop.run_until_complete(self.provisioner.cleanup())
+                self.provisioner = None
+            except Exception as e:
+                self.log.warning(f"Error during provisioner cleanup: {e}")
+        
+        # Clean up process proxy if it exists and is not the same as provisioner
+        if (self.process_proxy and (self.process_proxy is not self.provisioner)):
+            try:
+                if hasattr(self.process_proxy, 'cleanup') and callable(self.process_proxy.cleanup):
+                    self.process_proxy.cleanup()
+                self.process_proxy = None
+            except Exception as e:
+                self.log.warning(f"Error during process proxy cleanup: {e}")
+        
         # Try to call parent cleanup method if it exists
         try:
             return super().cleanup(connection_file)  # type: ignore
@@ -788,13 +942,28 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
         # Note This method was introduced in jupyter_client 6.1.5 and
         # will not be called until jupyter_client 6.2.0 has been released.
 
+        # Clean up both provisioner and process_proxy for compatibility
         # Note we must use `process_proxy` here rather than `kernel`, although they're the same value.
         # The reason is because if the kernel shutdown sequence has triggered its "forced kill" logic
         # then that method (jupyter_client/manager.py/_kill_kernel()) will set `self.kernel` to None,
         # which then prevents process proxy cleanup.
-        if self.process_proxy:
-            self.process_proxy.cleanup()
-            self.process_proxy = None
+        
+        # Clean up provisioner if it exists
+        if self.provisioner:
+            try:
+                await self.provisioner.cleanup(restart)
+                self.provisioner = None
+            except Exception as e:
+                self.log.warning(f"Error during provisioner cleanup: {e}")
+        
+        # Clean up process proxy if it exists and is not the same as provisioner
+        if (self.process_proxy and (self.process_proxy is not self.provisioner)):
+            try:
+                if hasattr(self.process_proxy, 'cleanup') and callable(self.process_proxy.cleanup):
+                    self.process_proxy.cleanup()
+                self.process_proxy = None
+            except Exception as e:
+                self.log.warning(f"Error during process proxy cleanup: {e}")
 
         await super().cleanup_resources(restart)
 
@@ -811,14 +980,34 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             # However, since we *may* want to limit the selected ports, go ahead and get the ports using
             # the process proxy (will be LocalProcessProxy for default case) since the port selection will
             # handle the default case when the member ports aren't set anyway.
-            if self.process_proxy:
-                if hasattr(self.process_proxy, 'select_ports') and callable(getattr(self.process_proxy, 'select_ports')):
+            
+            # Try provisioner first, then process proxy
+            if (self.provisioner and
+                hasattr(self.provisioner, 'select_ports') and
+                callable(getattr(self.provisioner, 'select_ports'))):
+                try:
+                    ports = self.provisioner.select_ports(5)
+                    if isinstance(ports, (list, tuple)) and len(ports) >= 5:
+                        self.shell_port = ports[0]
+                        self.iopub_port = ports[1]
+                        self.stdin_port = ports[2]
+                        self.hb_port = ports[3]
+                        self.control_port = ports[4]
+                except (AttributeError, TypeError) as e:
+                    self.log.debug(f"Failed to get ports from provisioner: {e}")
+            elif (self.process_proxy and 
+                  hasattr(self.process_proxy, 'select_ports') and 
+                  callable(getattr(self.process_proxy, 'select_ports'))):
+                try:
                     ports = self.process_proxy.select_ports(5)  # type: ignore
                     self.shell_port = ports[0]
                     self.iopub_port = ports[1]
                     self.stdin_port = ports[2]
                     self.hb_port = ports[3]
                     self.control_port = ports[4]
+                except (AttributeError, TypeError) as e:
+                    self.log.debug(f"Failed to get ports from process proxy: {e}")
+            
             super().write_connection_file(**kwargs)
         return None
 
@@ -836,7 +1025,7 @@ class RemoteKernelManager(EnterpriseGatewayConfigMixin, AsyncIOLoopKernelManager
             raise RuntimeError("No kernel spec available")
         
         # Check if jupyter_client has already created a provisioner
-        if hasattr(self, 'provisioner') and self.provisioner is not None:
+        if self.provisioner is not None:
             self.log.debug("Using provisioner from jupyter_client")
             # For backward compatibility, also set process_proxy to the provisioner
             self.process_proxy = self.provisioner
