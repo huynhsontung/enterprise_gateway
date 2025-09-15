@@ -235,33 +235,6 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         return False
     
     @override
-    async def poll(self) -> Optional[int]:
-        """
-        Poll the Kubernetes pod to determine if the kernel is still running.
-        
-        Returns:
-            None if running, exit code if terminated
-        """
-        # Use container status to determine if kernel is running
-        container_status = self.get_container_status(None)
-        
-        if container_status in self.get_error_states():
-            self.log.warning(
-                f"Kubernetes pod in error state: {container_status}. "
-                f"Pod: {self.kernel_pod_name}, KernelID: {self.kernel_id}"
-            )
-            return 1  # Return non-zero exit code for failed state
-        elif container_status in self.get_initial_states():
-            return None  # Still running or starting
-        else:
-            # Unknown state, assume terminated
-            self.log.debug(
-                f"Kubernetes pod in unknown state: {container_status}. "
-                f"Pod: {self.kernel_pod_name}, KernelID: {self.kernel_id}"
-            )
-            return 0
-    
-    @override
     async def wait(self) -> Optional[int]:
         """
         Wait for the Kubernetes pod to terminate.
@@ -510,8 +483,8 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
                 else:
                     pod_name = substituted
         
-        # Ensure pod name is DNS-compliant
-        pod_name = self._make_dns_compliant(pod_name)
+        # Ensure pod name is compliant
+        pod_name = self._get_pod_name(pod_name)
         
         # Update environment for kernel launcher
         env["KERNEL_POD_NAME"] = pod_name
@@ -747,33 +720,25 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
             self.log.warning(f"Template substitution error: {e}")
             return None
     
-    def _make_dns_compliant(self, name: str) -> str:
+    def _get_pod_name(self, name: str) -> str:
         """
-        Make a name DNS-compliant for Kubernetes.
+        Make a name valid for Kubernetes pod.
         
         Args:
             name: Original name
             
         Returns:
-            DNS-compliant name
+            Valid Kubernetes pod name
         """
         # Convert to lowercase and replace invalid characters with hyphens
-        dns_name = re.sub(r"[^0-9a-z]+", "-", name.lower())
-        
-        # Remove leading/trailing hyphens
-        while dns_name.startswith("-"):
-            dns_name = dns_name[1:]
-        while dns_name.endswith("-"):
-            dns_name = dns_name[:-1]
+        # And remove leading/trailing hyphens
+        pod_name = re.sub(r"[^0-9a-z]+", "-", name.lower()).strip("-")
         
         # Limit to 63 characters (DNS-1123 label limit)
-        if len(dns_name) > 63:
-            dns_name = dns_name[:63]
-            # Remove trailing hyphens again after truncation
-            while dns_name.endswith("-"):
-                dns_name = dns_name[:-1]
+        if len(pod_name) > 63:
+            pod_name = pod_name[:63].strip("-")
         
-        return dns_name
+        return pod_name
 
     async def _terminate_container_resources(self) -> None:
         """Terminate any artifacts created on behalf of the container's lifetime."""

@@ -86,8 +86,8 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         self.assertEqual(self.provisioner.kernel_image, "python:3.9")
         self.assertEqual(self.provisioner.object_kind, "Pod")
 
-    def test_dns_compliant_naming(self):
-        """Test DNS-compliant name generation."""
+    def test_get_pod_name(self):
+        """Test pod name generation."""
         test_cases = [
             ("test_name", "test-name"),
             ("Test-Name", "test-name"),
@@ -102,7 +102,7 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         
         for input_name, expected in test_cases:
             with self.subTest(input_name=input_name):
-                result = self.provisioner._make_dns_compliant(input_name)
+                result = self.provisioner._get_pod_name(input_name)
                 self.assertEqual(result, expected)
 
     def test_safe_template_substitution(self):
