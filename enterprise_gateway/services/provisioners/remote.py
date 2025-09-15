@@ -249,9 +249,8 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         
         # This will implement SSH tunneling logic
         # Similar to _tunnel_to_kernel in RemoteProcessProxy
-        # For now, we'll log that tunneling setup is needed
-        self.log.warning("SSH tunneling setup not yet implemented in provisioner")
-        
+        raise NotImplementedError("SSH tunneling setup not yet implemented in provisioner")
+
     def _update_connection(self, connection_info: KernelConnectionInfo) -> None:
         """
         Update connection information and notify kernel manager.
@@ -315,9 +314,18 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             self.log.debug(f"Received connection info: {connect_info}")
             self._update_connection(connect_info)
             return True
+        except (asyncio.TimeoutError, TimeoutError):
+            self.log.warning(f"Timeout waiting for KernelID '{self.kernel_id}' to send "
+                             f"connection info from host '{self.assigned_host}' - retrying...")
         except Exception as e:
-            self.log.error(f"Failed to receive connection info for kernel {self.kernel_id}: {e}")
-            return False
+            error_message = (
+                    f"Exception occurred waiting for connection file response for KernelId '{self.kernel_id}' "
+                    f"on host '{self.assigned_host}': {e}"
+                )
+            await self.kill()
+            self.log_and_raise(http_status_code=500, reason=error_message)
+
+        return False
         
     def detect_launch_failure(self) -> None:
         """
@@ -546,6 +554,11 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             await self.send_signal(kill_signal)
         except Exception as e:
             self.log.debug(f"Error sending kill signal: {e}")
+
+    @override
+    def log_and_raise(self, http_status_code: Optional[int] = None, reason: Optional[str] = None) -> None:
+        self._close_response_socket()
+        super().log_and_raise(http_status_code, reason)
         
     @property
     @override

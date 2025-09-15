@@ -7,18 +7,19 @@ including session persistence, authorization, and port management.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Dict, Optional
 
 from jupyter_client.provisioning.provisioner_base import KernelProvisionerBase
 from jupyter_client.kernelspec import KernelSpec
-from traitlets import Float, Set, Unicode, default
+from traitlets import Float, default
 
 from enterprise_gateway.mixins import EnterpriseGatewayConfigMixin
 from enterprise_gateway.services.kernels.remotemanager import RemoteKernelManager
 from enterprise_gateway.services.sessions.kernelsessionmanager import KernelSessionManager
 
-env_pop_list = ["EG_REMOTE_PWD", "LS_COLORS"]
 
+env_pop_list = ["EG_REMOTE_PWD", "LS_COLORS"]
 
 class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMixin):
     """
@@ -31,22 +32,6 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
     - Process information capture
     - Enterprise Gateway configuration integration
     """
-    
-    # Traitlets for Enterprise Gateway configuration
-    authorized_users = Set(
-        config=True,
-        help="""Set of users allowed to launch kernels with this provisioner."""
-    )
-    
-    unauthorized_users = Set(
-        config=True, 
-        help="""Set of users denied access to launch kernels with this provisioner."""
-    )
-    
-    port_range = Unicode(
-        config=True,
-        help="""Port range to use for kernel ports (e.g., '10000:10100')."""
-    )
     
     kernel_launch_timeout_env = "EG_KERNEL_LAUNCH_TIMEOUT"
     kernel_launch_timeout = Float(
@@ -266,7 +251,6 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
     @staticmethod
     def get_current_time() -> float:
         """Return the current time stamp in UTC time epoch format in milliseconds."""
-        import time
         return time.time() * 1000
         
     @staticmethod

@@ -202,6 +202,7 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
             True if startup confirmed, False otherwise
         """
         self.log.debug("Trying to confirm kernel container startup status")
+        self.start_time = self.get_current_time()
         
         max_attempts = 30  # 30 attempts with 2-second intervals = 60 seconds max wait
         attempt = 0

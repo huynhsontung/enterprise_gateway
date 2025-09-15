@@ -34,12 +34,12 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
 
     # Trait for specifying local IPs that should not be included when determining the response address
     prohibited_local_ips = List(
-        Unicode(),
+        config=True,
         help="""List of local IP patterns (regular expressions) that should not be included
         when determining the response address. For example, on systems with many network interfaces,
         some may have their IPs appear in the local interfaces list (e.g., docker's 172.17.0.* is an example)
         that should not be used. (EG_PROHIBITED_LOCAL_IPS env var)"""
-    ).tag(config=True)
+    )
 
     def _prohibited_local_ips_default(self):
         """Default value for prohibited_local_ips from environment variable."""
@@ -121,7 +121,7 @@ class LocalEnterpriseProvisioner(EnterpriseProvisionerBase, LocalProvisioner):
         connection_info = await super().launch_kernel(cmd, **kwargs)
         
         # Add Enterprise Gateway specific information
-        if hasattr(self, 'process') and self.process:
+        if self.process:
             self.log.info(
                 f"Local kernel launched with PID: {self.process.pid}, "
                 f"Kernel ID: {self.kernel_id}"
