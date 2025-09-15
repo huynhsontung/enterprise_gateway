@@ -86,7 +86,7 @@ class TestLocalEnterpriseProvisioner:
         mock_public_ips.return_value = ["192.168.1.100", "10.0.0.50", "172.17.0.1"]
         provisioner.prohibited_local_ips = []
         
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "192.168.1.100"  # Should return first IP
         mock_public_ips.assert_called_once()
 
@@ -96,7 +96,7 @@ class TestLocalEnterpriseProvisioner:
         mock_public_ips.return_value = ["172.17.0.1", "192.168.1.100", "10.0.0.50"]
         provisioner.prohibited_local_ips = ["172.17.*", "10.*"]
         
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "192.168.1.100"  # Should skip prohibited IPs and return allowed one
         mock_public_ips.assert_called_once()
 
@@ -106,7 +106,7 @@ class TestLocalEnterpriseProvisioner:
         mock_public_ips.return_value = ["172.17.0.1", "10.0.0.50"]
         provisioner.prohibited_local_ips = ["172.17.*", "10.*"]
         
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "172.17.0.1"  # Should return first IP when all are prohibited
         assert mock_public_ips.call_count == 2  # Called twice: once for loop, once for fallback
 
@@ -122,17 +122,17 @@ class TestLocalEnterpriseProvisioner:
         
         # Test exact match
         provisioner.prohibited_local_ips = ["172.17.0.1"]
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "192.168.1.100"
         
         # Test wildcard pattern
         provisioner.prohibited_local_ips = ["172.17.*"]
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "192.168.1.100"
         
         # Test multiple patterns
         provisioner.prohibited_local_ips = ["172.17.*", "192.168.*", "10.*"]
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "203.0.113.42"
 
     def test_init_uses_instance_method(self, kernel_spec: KernelSpec) -> None:
@@ -170,7 +170,7 @@ class TestLocalEnterpriseProvisioner:
         with patch('enterprise_gateway.services.provisioners.local.localinterfaces.public_ips') as mock_public_ips:
             mock_public_ips.return_value = test_ips
             provisioner.prohibited_local_ips = ["172.17.*"]
-            result = provisioner._get_local_ip()
+            result = provisioner.get_local_ip()
             # Should return 17.0.1.1 (first non-matching IP)
             assert result == "17.0.1.1"
 
@@ -181,12 +181,12 @@ class TestLocalEnterpriseProvisioner:
             
             # Test with empty list
             provisioner.prohibited_local_ips = []
-            result = provisioner._get_local_ip()
+            result = provisioner.get_local_ip()
             assert result == "192.168.1.100"
             
             # Test with list containing empty strings
             provisioner.prohibited_local_ips = ["", "   "]
-            result = provisioner._get_local_ip()
+            result = provisioner.get_local_ip()
             assert result == "192.168.1.100"
 
     def test_none_values_in_prohibited_list(self, provisioner: LocalEnterpriseProvisioner) -> None:
@@ -197,7 +197,7 @@ class TestLocalEnterpriseProvisioner:
             # The method should handle empty/None patterns gracefully
             # Note: In practice, traitlets would prevent None values, but testing robustness
             provisioner.prohibited_local_ips = [""]
-            result = provisioner._get_local_ip()
+            result = provisioner.get_local_ip()
             assert result == "192.168.1.100"
 
     @patch('enterprise_gateway.services.provisioners.local.localinterfaces.public_ips')
@@ -220,7 +220,7 @@ class TestLocalEnterpriseProvisioner:
             "169.254.*"        # Link-local
         ]
         
-        result = provisioner._get_local_ip()
+        result = provisioner.get_local_ip()
         assert result == "203.0.113.42"  # Only public IP should remain
 
     def test_trait_configuration_inheritance(self, kernel_spec: KernelSpec) -> None:

@@ -12,11 +12,11 @@ import os
 import signal
 import socket
 import json
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, override
+from abc import abstractmethod
+from typing import Any, Dict, override
 from socket import SHUT_RDWR
 
-from jupyter_client import KernelConnectionInfo
+from jupyter_client import KernelConnectionInfo, launch_kernel
 
 from .base import EnterpriseProvisionerBase
 from ..processproxies.processproxy import KernelChannel, ResponseManager
@@ -24,7 +24,7 @@ from ..processproxies.processproxy import KernelChannel, ResponseManager
 
 socket_timeout = float(os.getenv("EG_SOCKET_TIMEOUT", "0.005"))
 
-class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
+class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase):
     """
     Remote kernel provisioner for distributed environments.
     
@@ -117,19 +117,6 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         if (self.pid or self.pgid) and self.assigned_ip:
             self.ip = self.assigned_ip
         
-    @abstractmethod
-    async def confirm_remote_startup(self) -> bool:
-        """
-        Confirm the remote kernel has started successfully.
-        
-        This method must be implemented by subclasses to provide
-        environment-specific startup confirmation logic.
-        
-        Returns:
-            True if startup confirmed, False otherwise
-        """
-        pass
-        
     @override
     async def launch_kernel(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
         """
@@ -150,38 +137,23 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
         # Call parent pre_launch for Enterprise Gateway setup
         kwargs = await self.pre_launch(**kwargs)
         
-        # Launch the remote process (implemented by subclasses)
-        connection_info = await self._launch_remote_process(cmd, **kwargs)
-        
-        # Confirm remote startup
-        startup_confirmed = await self.confirm_remote_startup()
-        if not startup_confirmed:
-            self.detect_launch_failure()
-            raise RuntimeError("Failed to confirm remote kernel startup")
+        self.process = launch_kernel(cmd, **kwargs)
+        pgid = None
+        if hasattr(os, "getpgid"):
+            try:
+                pgid = os.getpgid(self.process.pid)
+            except OSError:
+                pass
+
+        self.pid = self.process.pid
+        self.pgid = pgid
         
         self.log.info(
             f"Remote kernel launched successfully. "
             f"Assigned to host: {self.assigned_host}, IP: {self.assigned_ip}"
         )
         
-        return connection_info
-        
-    @abstractmethod 
-    async def _launch_remote_process(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
-        """
-        Launch the actual remote process.
-        
-        This method must be implemented by subclasses to provide
-        environment-specific launch logic.
-        
-        Args:
-            cmd: Command to launch
-            **kwargs: Launch parameters
-            
-        Returns:
-            Initial connection information
-        """
-        pass
+        return self.connection_info
         
     async def _setup_connection_info(self, connection_info: KernelConnectionInfo) -> None:
         """
@@ -535,4 +507,4 @@ class RemoteEnterpriseProvisioner(EnterpriseProvisionerBase, ABC):
             True if managing a process, False otherwise
         """
         # This should be implemented based on remote process state
-        return bool(self.assigned_ip)
+        return bool(self.process)

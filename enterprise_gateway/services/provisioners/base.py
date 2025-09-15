@@ -237,16 +237,6 @@ class EnterpriseProvisionerBase(KernelProvisionerBase, EnterpriseGatewayConfigMi
             # Kill the kernel process
             await self.kill(restart=False)
             raise TimeoutError(error_message)
-            
-    def detect_launch_failure(self) -> None:
-        """
-        Detect if kernel launch has failed.
-        
-        This method should be called to check for launch failures
-        and provide appropriate error messages.
-        """
-        # This will be implemented by subclasses with specific launch failure detection
-        pass
         
     @staticmethod
     def get_current_time() -> float:

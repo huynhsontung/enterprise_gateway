@@ -13,7 +13,6 @@ import re
 import signal
 from typing import Any, Dict, Optional, override
 
-import kubernetes
 import urllib3
 from kubernetes import client, config
 from jupyter_client import KernelConnectionInfo
@@ -182,95 +181,6 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
         )
         
         return connection_info
-    
-    @override
-    async def _launch_remote_process(self, cmd: list[str], **kwargs) -> KernelConnectionInfo:
-        """
-        Launch the actual Kubernetes pod for the kernel.
-        
-        This delegates to the existing kernel launcher infrastructure which handles
-        pod creation, template processing, and container startup. The actual pod
-        creation and management is handled by the kernel launcher scripts.
-        
-        Args:
-            cmd: Command to launch the kernel
-            **kwargs: Launch parameters including environment variables
-            
-        Returns:
-            Empty connection info - actual connection info will be received via ResponseManager
-        """
-        self.log.info(
-            f"Launching Kubernetes pod for kernel. Pod: {self.kernel_pod_name}, "
-            f"Namespace: {self.kernel_namespace}, Command: {cmd}"
-        )
-        
-        # The Kubernetes kernel launcher handles the actual pod creation
-        # We return empty connection info here because the real connection info 
-        # comes via ResponseManager after the pod starts and the kernel establishes communication
-        
-        # The launch process is handled by:
-        # 1. Enterprise Gateway launches kernel launcher script
-        # 2. Kernel launcher creates pod using our pre-launch environment setup
-        # 3. Pod starts and kernel sends connection info via ResponseManager
-        # 4. We receive and process the connection info in receive_connection_info()
-        
-        # Return empty connection info as placeholder
-        return {}
-    
-    @override 
-    async def confirm_remote_startup(self) -> bool:
-        """
-        Confirm the Kubernetes pod has started successfully.
-        
-        This method polls the pod status to ensure it has reached a running state
-        and the kernel process is ready to accept connections.
-        
-        Returns:
-            True if pod is running successfully, False otherwise
-        """
-        self.log.debug(f"Confirming Kubernetes pod startup: {self.kernel_pod_name}")
-        
-        # Poll for pod to reach running state
-        max_attempts = 30  # 30 attempts with 2-second intervals = 60 seconds max wait
-        attempt = 0
-        
-        while attempt < max_attempts:
-            attempt += 1
-            
-            try:
-                pod_status = self.get_container_status(attempt)
-                
-                if pod_status == "running":
-                    self.log.info(
-                        f"Kubernetes pod confirmed running. Pod: {self.kernel_pod_name}, "
-                        f"IP: {self.assigned_ip}, Attempt: {attempt}"
-                    )
-                    return True
-                elif pod_status in self.get_error_states():
-                    self.log.error(
-                        f"Kubernetes pod failed to start. Pod: {self.kernel_pod_name}, "
-                        f"Status: {pod_status}, Attempt: {attempt}"
-                    )
-                    return False
-                else:
-                    # Pod is still starting (pending, etc.)
-                    self.log.debug(
-                        f"Kubernetes pod not ready yet. Pod: {self.kernel_pod_name}, "
-                        f"Status: {pod_status}, Attempt: {attempt}/{max_attempts}"
-                    )
-                    
-            except Exception as e:
-                self.log.warning(f"Error checking pod status on attempt {attempt}: {e}")
-            
-            # Wait before next attempt
-            await asyncio.sleep(2.0)
-        
-        # Timed out waiting for pod to start
-        self.log.error(
-            f"Timeout waiting for Kubernetes pod to start. Pod: {self.kernel_pod_name}, "
-            f"Final status: {self.get_container_status(None)}"
-        )
-        return False
     
     @override
     async def wait(self) -> Optional[int]:
@@ -800,3 +710,22 @@ class KubernetesEnterpriseProvisioner(ContainerEnterpriseProvisioner):
             
         except Exception as e:
             self.log.warning(f"Error during container resource cleanup: {e}")
+
+    @override
+    async def get_provisioner_info(self) -> Dict:
+        """Captures the base information necessary for persistence relative to this instance."""
+        provisioner_info = await super().get_provisioner_info()
+        provisioner_info.update({
+            "kernel_pod_name": self.kernel_pod_name,
+            "kernel_namespace": self.kernel_namespace,
+            "delete_kernel_namespace": self.delete_kernel_namespace
+        })
+        return provisioner_info
+
+    @override
+    async def load_provisioner_info(self, provisioner_info: Dict) -> None:
+        """Loads the base information necessary for persistence relative to this instance."""
+        await super().load_provisioner_info(provisioner_info)
+        self.kernel_pod_name = provisioner_info["kernel_pod_name"]
+        self.kernel_namespace = provisioner_info["kernel_namespace"]
+        self.delete_kernel_namespace = provisioner_info["delete_kernel_namespace"]

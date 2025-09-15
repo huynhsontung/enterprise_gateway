@@ -58,7 +58,6 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
         
         # Container-specific attributes
         self.container_name = ""
-        self.assigned_node_ip = None
 
     @override
     async def pre_launch(self, **kwargs: Any) -> Dict[str, Any]:
@@ -194,13 +193,12 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
             await self._terminate_container_resources()
 
     @override
-    async def confirm_remote_startup(self) -> bool:
+    async def post_launch(self, **kwargs: Any) -> None:
         """
         Confirm the container has started and returned necessary connection information.
-        
-        Returns:
-            True if startup confirmed, False otherwise
         """
+        await super().post_launch(**kwargs)
+
         self.log.debug("Trying to confirm kernel container startup status")
         self.start_time = self.get_current_time()
         
@@ -225,8 +223,6 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
                         # We won't send process signals for container lifecycle management
                         self.pid = 0
                         self.pgid = 0
-                
-        return ready_to_connect
 
     @override
     async def get_provisioner_info(self) -> Dict[str, Any]:
@@ -234,7 +230,6 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
         info = await super().get_provisioner_info()
         info.update({
             "container_name": self.container_name,
-            "assigned_node_ip": self.assigned_node_ip,
             "kernel_image": self.kernel_image,
             "kernel_executor_image": self.kernel_executor_image,
         })
@@ -246,7 +241,6 @@ class ContainerEnterpriseProvisioner(RemoteEnterpriseProvisioner):
         await super().load_provisioner_info(provisioner_info)
         
         self.container_name = provisioner_info.get("container_name", "")
-        self.assigned_node_ip = provisioner_info.get("assigned_node_ip")
         self.kernel_image = provisioner_info.get("kernel_image")
         self.kernel_executor_image = provisioner_info.get("kernel_executor_image")
 
