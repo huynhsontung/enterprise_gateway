@@ -532,33 +532,20 @@ class RemoteMappingKernelManager(AsyncMappingKernelManager):
         Returns True if kernel is alive, False otherwise.
         """
         try:
-            # For provisioners, we need to check if they support polling
-            if hasattr(km, 'provisioner') and km.provisioner:
-                if hasattr(km.provisioner, 'poll') and callable(km.provisioner.poll):
-                    # Provisioner supports polling
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # We're in an async context, this might be tricky
-                        # For now, assume alive if we can't poll synchronously
-                        self.log.debug("Cannot poll provisioner synchronously in async context")
-                        return True
-                    else:
-                        # Poll the provisioner
-                        result = loop.run_until_complete(km.provisioner.poll())
-                        return result is None  # None means still running
+            # For provisioners, rely on KernelManager's is_alive method
+            if km.provisioner:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're in an async context, schedule the coroutine
+                    return asyncio.run(km.is_alive())
                 else:
-                    # Provisioner doesn't support polling, assume alive
-                    self.log.debug("Provisioner doesn't support polling, assuming alive")
-                    return True
+                    # We're not in an async context, run it
+                    return loop.run_until_complete(km.is_alive())
             
             # For process proxies, use the traditional poll method
-            elif hasattr(km, 'process_proxy') and km.process_proxy:
-                if hasattr(km.process_proxy, 'poll') and callable(km.process_proxy.poll):
-                    result = km.process_proxy.poll()
-                    return result is False  # False means still running for process proxies
-                else:
-                    self.log.debug("Process proxy doesn't support polling, assuming alive")
-                    return True
+            elif km.process_proxy:
+                result = km.process_proxy.poll()
+                return result is False  # False means still running for process proxies
             
             # No provisioner or process proxy found
             self.log.warning("No provisioner or process proxy found to verify kernel status")
