@@ -96,7 +96,7 @@ class TokenAuthorizationMixin:
     header_prefix = "token "
     header_prefix_len = len(header_prefix)
 
-    def prepare(self) -> Optional[Awaitable[None]]:
+    async def prepare(self) -> None:
         """Ensures the correct auth token is present, either as a parameter
         `token=<value>` or as a header `Authorization: token <value>`.
         Does nothing unless an auth token is configured in eg_auth_token.
@@ -121,7 +121,7 @@ class TokenAuthorizationMixin:
                     client_token = None
             if client_token != server_token:
                 return self.send_error(401)
-        return super().prepare()
+        return await super().prepare()
 
 
 class JSONErrorsMixin:

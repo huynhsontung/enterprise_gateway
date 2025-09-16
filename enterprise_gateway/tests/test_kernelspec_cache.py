@@ -120,17 +120,17 @@ def kernel_spec_cache(is_enabled, kernel_spec_manager):
 def is_enabled(request):
     return request.param
 
-
+@pytest.mark.asyncio
 async def tests_get_all_specs(kernel_spec_cache):
     kspecs = await kernel_spec_cache.get_all_specs()
     assert len(kspecs) == 3
 
-
+@pytest.mark.asyncio
 async def tests_get_named_spec(kernel_spec_cache):
     kspec = await kernel_spec_cache.get_kernel_spec("test2")
     assert kspec.display_name == "Test kernel: test2"
 
-
+@pytest.mark.asyncio
 async def tests_get_modified_spec(kernel_spec_cache):
     kspec = await kernel_spec_cache.get_kernel_spec("test2")
     assert kspec.display_name == "Test kernel: test2"
@@ -141,7 +141,7 @@ async def tests_get_modified_spec(kernel_spec_cache):
     kspec = await kernel_spec_cache.get_kernel_spec("test2")
     assert kspec.display_name == "test2 modified!"
 
-
+@pytest.mark.asyncio
 async def tests_add_spec(kernel_spec_cache, kernelspec_location, other_kernelspec_location):
     assert len(kernel_spec_cache.observed_dirs) == (1 if kernel_spec_cache.cache_enabled else 0)
     assert (
@@ -174,7 +174,7 @@ async def tests_add_spec(kernel_spec_cache, kernelspec_location, other_kernelspe
     assert kspec.display_name == "Test kernel: added2"
     assert kernel_spec_cache.cache_misses == (1 if kernel_spec_cache.cache_enabled else 0)
 
-
+@pytest.mark.asyncio
 async def tests_remove_spec(kernel_spec_cache):
     kspec = await kernel_spec_cache.get_kernel_spec("test2")
     assert kspec.display_name == "Test kernel: test2"
@@ -187,7 +187,7 @@ async def tests_remove_spec(kernel_spec_cache):
 
     assert kernel_spec_cache.cache_misses == (1 if kernel_spec_cache.cache_enabled else 0)
 
-
+@pytest.mark.asyncio
 async def tests_get_missing(kernel_spec_cache):
     with pytest.raises(NoSuchKernel):
         await kernel_spec_cache.get_kernel_spec("missing")

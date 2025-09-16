@@ -18,10 +18,10 @@ from jupyter_client.kernelspec import KernelSpecManager
 from jupyter_core.application import JupyterApp, base_aliases
 from jupyter_server.serverapp import random_ports
 from jupyter_server.utils import url_path_join
-from tornado import httpserver, web
+from urllib3.util.ssl_match_hostname import match_hostname
+from tornado import httpserver, web, ioloop
 from tornado.log import enable_pretty_logging
-from traitlets.config import Configurable
-from zmq.eventloop import ioloop
+from traitlets.config import Configurable, ClassesType
 
 from ._version import __version__
 from .base.handlers import default_handlers as default_base_handlers
@@ -78,7 +78,7 @@ class EnterpriseGatewayApp(EnterpriseGatewayConfigMixin, JupyterApp):
     """
 
     # Also include when generating help options
-    classes: ClassVar = [
+    classes: ClassesType = [
         KernelSpecCache,
         FileKernelSessionManager,
         WebhookKernelSessionManager,
@@ -198,7 +198,7 @@ class EnterpriseGatewayApp(EnterpriseGatewayConfigMixin, JupyterApp):
         def wrapped_prepare(self):
             ssl_cert = self.request.get_ssl_certificate()
             try:
-                ssl.match_hostname(ssl_cert, authorized_hostname)
+                match_hostname(ssl_cert, authorized_hostname)
             except ssl.SSLCertVerificationError:
                 raise web.HTTPError(403, "Forbidden") from None
             base_prepare(self)
@@ -371,7 +371,7 @@ class EnterpriseGatewayApp(EnterpriseGatewayConfigMixin, JupyterApp):
     _last_config_update = int(time.time())
     _dynamic_configurables: ClassVar = {}
 
-    def update_dynamic_configurables(self) -> bool:
+    async def update_dynamic_configurables(self) -> bool:
         """
         Called periodically, this checks the set of loaded configuration files for updates.
         If updates have been detected, reload the configuration files and update the list of
@@ -392,7 +392,7 @@ class EnterpriseGatewayApp(EnterpriseGatewayConfigMixin, JupyterApp):
             # the Application's configuration, then update the config of each configurable
             # from the newly loaded values.
 
-            self.load_config_file(self)
+            self.load_config_file()
 
             for config_name, configurable in self._dynamic_configurables.items():
                 # Since Application.load_config_file calls update_config on the Application, skip

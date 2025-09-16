@@ -4,6 +4,7 @@
 
 import asyncio
 import unittest
+import subprocess
 from unittest.mock import Mock, AsyncMock, patch, MagicMock, call
 from typing import Optional
 
@@ -56,6 +57,10 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
             "kernel_executor_image": "elyra/enterprise-gateway:dev",
             "kernel_service_account_name": "kernel-sa"
         }
+
+        # Mock process
+        self.mock_process = Mock(spec=subprocess.Popen)
+        self.mock_process.pid = 1234
 
         # Create provisioner with mocked Kubernetes client
         with patch('kubernetes.client.CoreV1Api') as mock_core_v1_class, \
@@ -383,8 +388,8 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         
         self.assertEqual(result, "")  # Empty string when no pods found
 
-    @patch('asyncio.sleep', new_callable=AsyncMock)
-    def test_launch_kernel_success(self, mock_sleep):
+    @patch('enterprise_gateway.services.provisioners.remote.launch_kernel', new_callable=Mock)
+    def test_launch_kernel_success(self, mock_launch):
         """Test successful kernel launch."""
         import asyncio
         cmd = ["python", "-m", "ipykernel_launcher"]
@@ -392,20 +397,16 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         
         # Mock _launch_remote_process to return connection info directly (bypasses ResponseManager wait)
         # Also mock confirm_remote_startup to avoid actual Kubernetes API calls
-        with patch.object(self.provisioner, '_launch_remote_process', new_callable=AsyncMock) as mock_launch, \
-             patch.object(self.provisioner, 'confirm_remote_startup', new_callable=AsyncMock) as mock_confirm, \
-             patch.object(self.provisioner, '_create_kernel_namespace') as mock_create_ns:
+        with patch.object(self.provisioner, '_create_kernel_namespace') as mock_create_ns:
             
-            mock_launch.return_value = self.mock_connection_info
-            mock_confirm.return_value = True
+            mock_launch.return_value = self.mock_process
             mock_create_ns.return_value = "kernel-test-kernel-id"
             
             result = asyncio.run(self.provisioner.launch_kernel(cmd, **kwargs))
-            
-            self.assertEqual(result, self.mock_connection_info)
+
+            self.assertEqual(result, {})  # Provisioner connection info is not yet set
             mock_create_ns.assert_called_once()
             mock_launch.assert_called_once()  # Just check it was called, don't check exact args
-            mock_confirm.assert_called_once()
             
             # Verify that the namespace was set correctly
             call_args = mock_launch.call_args
@@ -520,10 +521,10 @@ class TestKubernetesEnterpriseProvisioner(unittest.TestCase):
         import asyncio
         info = {
             'kernel_id': 'loaded-kernel-id',
+            'kernel_pod_name': 'loaded-kernel-pod-name',
             'kernel_namespace': 'loaded-namespace',
-            'kernel_image': 'loaded-image:latest',
-            'connection_info': {},  # Add required connection_info
-            'ip': '127.0.0.1'  # Add required ip field
+            'delete_kernel_namespace': True,
+            'connection_info': self.mock_connection_info,
         }
         
         asyncio.run(self.provisioner.load_provisioner_info(info))

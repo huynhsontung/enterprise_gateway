@@ -12,6 +12,7 @@ from functools import partial
 from typing import Any
 
 import jupyter_server.services.kernels.handlers as jupyter_server_handlers
+import jupyter_server.services.kernels.websocket as jupyter_server_websocket
 import tornado
 from jupyter_client.jsonutil import date_default
 from tornado import web
@@ -142,19 +143,17 @@ class KernelHandler(
     def get(self, kernel_id: str):
         """Get the model for a kernel."""
         km = self.kernel_manager
-        km.check_kernel_id(kernel_id)
         model = km.kernel_model(kernel_id)
         self.finish(json.dumps(model, default=date_default))
 
     @web.authenticated
     async def delete(self, kernel_id):
         """Remove a kernel."""
-        self.kernel_manager.check_kernel_id(kernel_id=kernel_id)
         await super().delete(kernel_id=kernel_id)
 
 
-class ZMQChannelsHandler(
-    TokenAuthorizationMixin, CORSMixin, JSONErrorsMixin, jupyter_server_handlers.ZMQChannelsHandler
+class KernelWebsocketHandler(
+    TokenAuthorizationMixin, CORSMixin, JSONErrorsMixin, jupyter_server_websocket.KernelWebsocketHandler
 ):
     """Extends the kernel websocket handler."""
 

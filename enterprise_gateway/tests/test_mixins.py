@@ -21,7 +21,7 @@ class SuperTokenAuthHandler:
 
     is_prepared = False
 
-    def prepare(self):
+    async def prepare(self):
         # called by the mixin when authentication succeeds
         self.is_prepared = True
 
@@ -44,77 +44,77 @@ class TestableTokenAuthHandler(TokenAuthorizationMixin, SuperTokenAuthHandler):
         return self.arguments.get(name, default)
 
 
-class TestTokenAuthMixin(unittest.TestCase):
+class TestTokenAuthMixin(unittest.IsolatedAsyncioTestCase):
     """Unit tests the Token authorization mixin."""
 
     def setUp(self):
         """Creates a handler that uses the mixin."""
         self.mixin = TestableTokenAuthHandler("YouKnowMe")
 
-    def test_no_token_required(self):
+    async def test_no_token_required(self):
         """No token required - status should be None."""
         self.mixin.settings["eg_auth_token"] = ""
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, True)
         self.assertEqual(self.mixin.status_code, None)
 
-    def test_missing_token(self):
+    async def test_missing_token(self):
         """Missing token - tatus should be 'unauthorized'."""
         attrs = {"headers": {}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, False)
         self.assertEqual(self.mixin.status_code, 401)
 
-    def test_valid_header_token(self):
+    async def test_valid_header_token(self):
         """Valid header token - status should be None."""
         attrs = {"headers": {"Authorization": "token YouKnowMe"}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, True)
         self.assertEqual(self.mixin.status_code, None)
 
-    def test_wrong_header_token(self):
+    async def test_wrong_header_token(self):
         """Wrong header token - status should be 'unauthorized'."""
         attrs = {"headers": {"Authorization": "token NeverHeardOf"}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, False)
         self.assertEqual(self.mixin.status_code, 401)
 
-    def test_valid_url_token(self):
+    async def test_valid_url_token(self):
         """Valid url token - status should be None."""
         self.mixin.arguments["token"] = "YouKnowMe"
         attrs = {"headers": {}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, True)
         self.assertEqual(self.mixin.status_code, None)
 
-    def test_wrong_url_token(self):
-        """Wrong url token - tatus should be 'unauthorized'."""
+    async def test_wrong_url_token(self):
+        """Wrong url token - status should be 'unauthorized'."""
         self.mixin.arguments["token"] = "NeverHeardOf"
         attrs = {"headers": {}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, False)
         self.assertEqual(self.mixin.status_code, 401)
 
-    def test_differing_tokens_valid_url(self):
+    async def test_differing_tokens_valid_url(self):
         """Differing tokens - status should be None, URL token takes precedence"""
         self.mixin.arguments["token"] = "YouKnowMe"
         attrs = {"headers": {"Authorization": "token NeverHeardOf"}}
         self.mixin.request = Mock(**attrs)
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, True)
         self.assertEqual(self.mixin.status_code, None)
 
-    def test_differing_tokens_wrong_url(self):
+    async def test_differing_tokens_wrong_url(self):
         """Differing token w/ wrong url - status should be 'unauthorized', URL token takes precedence"""
         attrs = {"headers": {"Authorization": "token YouKnowMe"}}
         self.mixin.request = Mock(**attrs)
         self.mixin.arguments["token"] = "NeverHeardOf"
-        self.mixin.prepare()
+        await self.mixin.prepare()
         self.assertEqual(self.mixin.is_prepared, False)
         self.assertEqual(self.mixin.status_code, 401)
 
